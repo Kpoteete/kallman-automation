@@ -1,0 +1,29 @@
+# Secrets
+.env
+*.local.json
+secrets.json
+appsettings.Production.json
+appsettings.Development.json
+
+# .NET build output
+bin/
+obj/
+
+# Output files
+*.xlsx
+*.csv
+*.log
+
+# Office temp files
+~$*
+
+# Windows junk
+Thumbs.db
+.DS_Store
+
+# VS Code
+.vscode/
+
+# User-specific files
+*.user
+*.suo
