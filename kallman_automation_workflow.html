@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kallman Automation Workflow</title>
+<style>
+:root { --blue:#12355B; --light:#EAF2F8; --line:#D9E2EC; --text:#1f2933; }
+* { box-sizing: border-box; }
+body { font-family: Arial, Helvetica, sans-serif; color: var(--text); margin: 0; background: #f3f6f9; }
+.page { max-width: 900px; margin: 24px auto; background: white; padding: 34px; border-radius: 16px; box-shadow: 0 8px 28px rgba(0,0,0,.08); }
+h1 { color: var(--blue); margin: 0 0 6px; font-size: 30px; }
+.subtitle { color: #52616f; margin-bottom: 18px; }
+h2 { color: var(--blue); border-bottom: 2px solid var(--line); padding-bottom: 5px; margin-top: 26px; }
+h3 { color: #1F4E79; margin-bottom: 6px; }
+.callout { background: var(--light); border-left: 6px solid var(--blue); padding: 12px 14px; border-radius: 8px; font-weight: 700; }
+table { width: 100%; border-collapse: collapse; margin: 10px 0 18px; font-size: 14px; }
+th { background: var(--blue); color: white; text-align: left; }
+th, td { border: 1px solid var(--line); padding: 8px; vertical-align: top; }
+tr:nth-child(even) td { background: #f8fafc; }
+pre { background: #f5f7fa; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; font-size: 13px; line-height: 1.35; }
+.small { font-size: 13px; color: #52616f; }
+.badge { display: inline-block; background: var(--light); color: var(--blue); border: 1px solid #c7ddf2; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+@media print { body { background: white; } .page { box-shadow: none; margin: 0; max-width: none; border-radius: 0; } h2 { break-after: avoid; } pre, table { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<div class="page">
+<h1>Kallman Automation Workflow</h1>
+<div class="subtitle">Printable guide for creating, editing, testing, and pushing automation projects to production.</div>
+<div class="callout">Simple model: Work in <span class="badge">testing</span>. Test it. Merge to <span class="badge">main</span>. Pull <span class="badge">main</span> on the server. Task Scheduler runs production.</div>
+
+<h2>Folder Map</h2>
+<table><thead><tr><th>Place</th><th>Path / Branch</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>Normal computer</td><td><code>C:\kwi-automations</code></td><td>Edit, test, and run Codex.</td></tr>
+<tr><td>GitHub repo</td><td><code>github.com/Kpoteete/kallman-automation</code></td><td>Source of truth.</td></tr>
+<tr><td>testing branch</td><td><code>testing</code></td><td>Sandbox for new or edited code.</td></tr>
+<tr><td>main branch</td><td><code>main</code></td><td>Production-ready code.</td></tr>
+<tr><td>Server computer</td><td><code>C:\Automations\Production\kallman-automation</code></td><td>Task Scheduler runs this copy.</td></tr>
+<tr><td>SharePoint Data Warehouse</td><td>Your synced Data Warehouse folders</td><td>Excel, CSV, exports, logs, and shared output.</td></tr>
+</tbody></table>
+
+<h2>Workflow 1: Create a New Automation Project</h2>
+<h3>1. Start in the repo</h3><pre>cd C:\kwi-automations
+git switch testing
+git pull origin testing</pre>
+<h3>2. Create the project folder</h3><pre>New-Item -ItemType Directory -Path "projects\PROJECT-NAME" -Force
+New-Item -ItemType Directory -Path "projects\PROJECT-NAME\scripts" -Force
+New-Item -ItemType Directory -Path "projects\PROJECT-NAME\config" -Force</pre>
+<h3>3. Start Codex in the repo</h3><pre>codex.cmd</pre>
+<h3>4. Prompt Codex</h3><pre>Use C:\kwi-automations as the project root.
+Create or edit only inside C:\kwi-automations.
+Create the project at projects\PROJECT-NAME.
+Do not include passwords, API keys, exports, CSVs, or Excel files.</pre>
+<h3>5. Test locally</h3><pre>.\projects\PROJECT-NAME\run.ps1
+# or for Python:
+py .\projects\PROJECT-NAME\scripts\main.py</pre>
+<h3>6. Commit to testing</h3><pre>git status
+git add .
+git commit -m "Add PROJECT-NAME automation"
+git push origin testing</pre>
+<h3>7. Promote to production branch</h3><pre>git switch main
+git pull origin main
+git merge testing
+git push origin main</pre>
+<h3>8. Update the server computer</h3><pre>cd C:\Automations\Production\kallman-automation
+git switch main
+git pull origin main</pre>
+
+<h2>Workflow 2: Edit an Existing Automation Project</h2>
+<h3>1. Start in testing</h3><pre>cd C:\kwi-automations
+git switch testing
+git pull origin testing</pre>
+<h3>2. Start Codex</h3><pre>codex.cmd</pre>
+<h3>3. Prompt Codex</h3><pre>Use C:\kwi-automations as the project root.
+Edit this existing project: projects\PROJECT-NAME.
+Make a small, controlled change.
+Do not edit outside this repo.
+Do not add passwords, API keys, CSVs, Excel files, or exports.</pre>
+<h3>4. Test locally</h3><pre>.\projects\PROJECT-NAME\run.ps1
+# or for Python:
+py .\projects\PROJECT-NAME\scripts\main.py</pre>
+<h3>5. Review changes</h3><pre>git status
+git diff</pre>
+<h3>6. Commit to testing</h3><pre>git add .
+git commit -m "Update PROJECT-NAME automation"
+git push origin testing</pre>
+<h3>7. Promote to main</h3><pre>git switch main
+git pull origin main
+git merge testing
+git push origin main</pre>
+<h3>8. Pull production on server</h3><pre>cd C:\Automations\Production\kallman-automation
+git switch main
+git pull origin main</pre>
+
+<h2>Production Rules</h2>
+<table><thead><tr><th>Do</th><th>Do Not</th></tr></thead><tbody>
+<tr><td>Work on testing first.</td><td>Do not let Codex edit the server production folder.</td></tr>
+<tr><td>Test before merging to main.</td><td>Do not commit passwords, API keys, exports, CSVs, or Excel files.</td></tr>
+<tr><td>Keep the server computer on main.</td><td>Do not switch the server computer to testing.</td></tr>
+<tr><td>Use SharePoint Data Warehouse for input/output files.</td><td>Do not run long-term production from Desktop folders.</td></tr>
+</tbody></table>
+
+<h2>Quick Cheat Sheet</h2>
+<pre>cd C:\kwi-automations
+git switch testing
+git pull origin testing
+codex.cmd
+
+# after testing changes
+git add .
+git commit -m "Describe the change"
+git push origin testing
+
+# promote to production branch
+git switch main
+git pull origin main
+git merge testing
+git push origin main
+
+# on server computer
+cd C:\Automations\Production\kallman-automation
+git switch main
+git pull origin main</pre>
+<p class="small">Storage rule: GitHub is for code. SharePoint Data Warehouse is for Excel, CSV, exports, logs, and shared output.</p>
+</div>
+</body>
+</html>
