@@ -30,7 +30,7 @@ class Program
     private const int MonthsAhead = 13;
     private static readonly bool FlagMissingKeyData = true;
 
-    private const string DashboardSheetName = "Date and Time Picker";
+    private const string DashboardSheetName = "Date Picker";
     private const string PullDatePickerSheetName = "Date Picker";
     private const string CurrentRegistrationSheetName = "Current Registration List";
     private const string PreviousRegistrationSheetName = "Last Registration List";
@@ -594,7 +594,7 @@ class Program
                 ["CompanyAddress1"] = GetValue(companyAccount ?? new Dictionary<string, string>(), new[] { "Address1", "Address 1" }, "H"),
                 ["CompanyCity"] = GetValue(companyAccount ?? new Dictionary<string, string>(), new[] { "City" }, "U"),
                 ["CompanyState"] = GetValue(companyAccount ?? new Dictionary<string, string>(), new[] { "State" }, "CU"),
-                ["CompanyPostalCode"] = GetValue(companyAccount ?? new Dictionary<string, string>(), new[] { "PostalCode", "Postal Code" }, "CE"),
+                ["CompanyPostalCode"] = FormatPostalCode(GetValue(companyAccount ?? new Dictionary<string, string>(), new[] { "PostalCode", "Postal Code" }, "CE")),
 
                 ["ExhibitorType"] = FormatExhibitorType(rawExhibitorType),
                 ["CompanyBannerName"] = GetValue(exhibitor, new[] { "CompanyBannerName", "Company Banner Name" }, "W"),
@@ -619,7 +619,7 @@ class Program
                 ["CatalogAddress"] = GetValue(exhibitor, new[] { "CatalogAddress", "Catalog Address" }, "AR"),
                 ["CatalogCity"] = GetValue(exhibitor, new[] { "CatalogCity", "Catalog City" }, "AX"),
                 ["CatalogState"] = GetValue(exhibitor, new[] { "CatalogState", "Catalog State" }, "AY"),
-                ["CatalogPostalCode"] = GetValue(exhibitor, new[] { "CatalogPostalCode", "Catalog Postal Code" }, "AZ"),
+                ["CatalogPostalCode"] = FormatPostalCode(GetValue(exhibitor, new[] { "CatalogPostalCode", "Catalog Postal Code" }, "AZ")),
                 ["CatalogCountry"] = GetValue(exhibitor, new[] { "CatalogCountry", "Catalog Country" }, "BA"),
                 ["CatalogCountryName"] = GetValue(exhibitor, new[] { "CatalogCountryName", "Catalog Country Name", "Cataloged Country Name" }, "DU"),
                 ["ExhibitorWebsite"] = GetValue(exhibitor, new[] { "Website" }, "CB")
@@ -669,7 +669,7 @@ class Program
         outputRow[$"{prefix}LegalName"] = GetAccountValue(account, new[] { "LegalName", "Legal Name" }, "AY");
         outputRow[$"{prefix}Mobile"] = GetAccountValue(account, new[] { "Mobile", "Mobile Number" }, "BR");
         outputRow[$"{prefix}Phone"] = GetAccountValue(account, new[] { "Phone" }, "CC");
-        outputRow[$"{prefix}PostalCode"] = GetAccountValue(account, new[] { "PostalCode", "Postal Code" }, "CE");
+        outputRow[$"{prefix}PostalCode"] = FormatPostalCode(GetAccountValue(account, new[] { "PostalCode", "Postal Code" }, "CE"));
         outputRow[$"{prefix}PrimaryAccount"] = GetAccountValue(account, new[] { "PrimaryAccount", "Primary Account" }, "CH");
         outputRow[$"{prefix}State"] = GetAccountValue(account, new[] { "State" }, "CU");
         outputRow[$"{prefix}Title"] = GetAccountValue(account, new[] { "Title" }, "DO");
@@ -1361,6 +1361,8 @@ class Program
             allPullRows.Count,
             defaultPreviousPullDateTime
         );
+        AddCurrentFilterWorksheet(workbook, NewSinceSelectedDateSheetName, currentPullRows.Count, "New");
+        AddCurrentFilterWorksheet(workbook, ChangedSinceSelectedDateSheetName, currentPullRows.Count, "Changed");
 
         workbook.Worksheet(PullDatePickerSheetName).Position = 1;
         workbook.Worksheet(CurrentRegistrationSheetName).Position = 2;
@@ -1376,13 +1378,13 @@ class Program
         ws.Cell(1, 1).Style.Font.Bold = true;
         ws.Cell(1, 1).Style.Font.FontSize = 16;
 
-        ws.Cell(3, 1).Value = "Last registration pull:";
-        ws.Cell(3, 2).Value = defaultComparePullDateTime;
-        ws.Cell(3, 2).Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
+        ws.Cell(3, 1).Value = "Compare to date:";
+        ws.Cell(3, 2).Value = defaultComparePullDateTime.Date;
+        ws.Cell(3, 2).Style.DateFormat.Format = "yyyy-mm-dd";
         ws.Cell(3, 2).Style.Fill.BackgroundColor = XLColor.FromArgb(255, 242, 204);
         ws.Cell(3, 2).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
 
-        ws.Cell(4, 2).Value = "Input the date and time of the last registration pull to compare against.";
+        ws.Cell(4, 2).Value = "Pick a date. The workbook compares against the latest pull on or before that date.";
         ws.Cell(4, 2).Style.Font.FontColor = XLColor.FromArgb(117, 117, 117);
         ws.Cell(4, 2).Style.Font.Italic = true;
 
@@ -1421,7 +1423,9 @@ class Program
         string priorValueLastRef = $"${IndexToColumnLetter(priorValueLastCol)}{firstDataRow}";
         string firstComparableCellRef = $"{IndexToColumnLetter(firstSourceCol + 1)}{firstDataRow}";
         string dataCompareKeyRange = BuildDataSheetRange(PullCompareKeyColumnName, dataFirstRow, dataLastRow);
-        string compareDateTimeCellReference = $"{FormulaSheetName(PullDatePickerSheetName)}!$B$3";
+        string compareDateCellReference = $"{FormulaSheetName(PullDatePickerSheetName)}!$B$3";
+        string pullDateTimeTableColumn = $"{PullDataTableName}[{GetDisplayColumnName(PullDateTimeColumnName)}]";
+        string latestPullDateTimeExpression = $"IFERROR(MAX(FILTER({pullDateTimeTableColumn},{pullDateTimeTableColumn}<({compareDateCellReference}+1))),\"\")";
 
         for (int c = 0; c < CurrentRegistrationListColumns.Count; c++)
         {
@@ -1458,7 +1462,7 @@ class Program
         for (int r = firstDataRow; r <= lastDataRow; r++)
         {
             string rowKeyRef = $"${IndexToColumnLetter(firstSourceCol)}{r}";
-            string compareKeyExpression = $"{rowKeyRef}&\"|\"&TEXT({compareDateTimeCellReference},\"yyyy-mm-dd hh:mm:ss\")";
+            string compareKeyExpression = $"{rowKeyRef}&\"|\"&TEXT({latestPullDateTimeExpression},\"yyyy-mm-dd hh:mm:ss\")";
             string priorExistsRef = $"{IndexToColumnLetter(priorExistsCol)}{r}";
             string changedCountRef = $"{IndexToColumnLetter(changedCountCol)}{r}";
 
@@ -1501,9 +1505,41 @@ class Program
             .Fill.SetBackgroundColor(XLColor.FromArgb(255, 242, 204));
 
         ws.Columns(priorExistsCol, priorValueLastCol).Hide();
-        ws.SheetView.FreezeRows(1);
 
         ApplyRegistrationListColumnWidths(ws, firstSourceCol, changeStatusCol, changeDetailsCol);
+    }
+
+    private static void AddCurrentFilterWorksheet(
+        XLWorkbook workbook,
+        string worksheetName,
+        int currentRowCount,
+        string changeStatus)
+    {
+        IXLWorksheet ws = workbook.Worksheets.Add(worksheetName);
+
+        List<string> headers = CurrentRegistrationListColumns
+            .Select(GetDisplayColumnName)
+            .Concat(new[] { "Change Status", "Change Details" })
+            .ToList();
+
+        AddSimpleHeaderRow(ws, headers);
+
+        int firstDataRow = 2;
+        int lastDataRow = Math.Max(firstDataRow, firstDataRow + Math.Max(currentRowCount, 1) - 1);
+        int lastCol = CurrentRegistrationListColumns.Count + 2;
+        int statusCol = CurrentRegistrationListColumns.Count + 1;
+        string lastColumnLetter = IndexToColumnLetter(lastCol);
+        string statusColumnLetter = IndexToColumnLetter(statusCol);
+        string sourceSheet = FormulaSheetName(CurrentRegistrationSheetName);
+        string escapedStatus = EscapeExcelString(changeStatus);
+        string emptyMessage = changeStatus.Equals("New", StringComparison.OrdinalIgnoreCase)
+            ? "No new exhibitors for selected date."
+            : "No changed exhibitors for selected date.";
+
+        ws.Cell(2, 1).FormulaA1 =
+            $"FILTER({sourceSheet}!$A${firstDataRow}:${lastColumnLetter}${lastDataRow},{sourceSheet}!${statusColumnLetter}${firstDataRow}:${statusColumnLetter}${lastDataRow}=\"{escapedStatus}\",\"{emptyMessage}\")";
+
+        ApplyDynamicListColumnWidths(ws, headers);
     }
 
     private static string BuildDataSheetRange(string internalHeader, int firstRow, int lastRow)
@@ -1677,14 +1713,11 @@ class Program
         ws.Cell(1, 1).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
 
         ws.Cell(2, 1).Value = "Date";
-        ws.Cell(3, 1).Value = "Time";
         ws.Cell(2, 2).Value = selectedPullDateTime.Date;
-        ws.Cell(3, 2).Value = selectedPullDateTime.TimeOfDay.TotalDays;
         ws.Cell(2, 2).Style.DateFormat.Format = "yyyy-mm-dd";
-        ws.Cell(3, 2).Style.NumberFormat.Format = "hh:mm:ss";
-        ws.Range(2, 2, 3, 2).Style.Fill.BackgroundColor = inputFill;
-        ws.Range(2, 2, 3, 2).Style.Font.Bold = true;
-        ws.Range(2, 2, 3, 2).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        ws.Cell(2, 2).Style.Fill.BackgroundColor = inputFill;
+        ws.Cell(2, 2).Style.Font.Bold = true;
+        ws.Cell(2, 2).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
 
         ws.Cell(5, 1).Value = "Event";
         ws.Cell(5, 2).Value = eventInfo.EventName;
@@ -1733,7 +1766,6 @@ class Program
         ws.Column(5).Width = 12;
         ws.Column(6).Width = 10;
         ws.Column(7).Width = 22;
-        ws.SheetView.FreezeRows(1);
     }
 
     private static void AddCurrentRegistrationListWorksheet(
@@ -1860,8 +1892,6 @@ class Program
         IXLRange tableRange = ws.Range(1, 1, dataRowCount + 1, PullDataWorkbookColumns.Count);
         tableRange.CreateTable(PullDataTableName);
 
-        ws.SheetView.FreezeRows(1);
-
         for (int i = 0; i < PullDataWorkbookColumns.Count; i++)
         {
             string header = PullDataWorkbookColumns[i];
@@ -1947,8 +1977,6 @@ class Program
             ws.Column(col).Hide();
         }
 
-        ws.SheetView.FreezeRows(headerRow);
-        ws.SheetView.FreezeColumns(4);
         ApplyCurrentListColumnWidths(ws, firstVisibleCol);
     }
 
@@ -1968,7 +1996,7 @@ class Program
         string pickerSheet = FormulaSheetName(DashboardSheetName);
         string lastDisplayColumn = GetDisplayColumnName(CleanOutputColumns.Last());
 
-        return $"LET(selected,{pickerSheet}!$B$2+{pickerSheet}!$B$3,pullStamp,{PullDataTableName}[Pull date]+{PullDataTableName}[Pull Time],latest,IFERROR(MAX(FILTER(pullStamp,pullStamp<=selected)),\"\"),IF(latest=\"\",\"No pull found for selected date/time\",FILTER({PullDataTableName}[[RowKey]:[{lastDisplayColumn}]],pullStamp=latest,\"No pull found for selected date/time\")))";
+        return $"LET(selected,{pickerSheet}!$B$2,pullStamp,{PullDataTableName}[{GetDisplayColumnName(PullDateTimeColumnName)}],latest,IFERROR(MAX(FILTER(pullStamp,pullStamp<selected+1)),\"\"),IF(latest=\"\",\"No pull found for selected date\",FILTER({PullDataTableName}[[RowKey]:[{lastDisplayColumn}]],pullStamp=latest,\"No pull found for selected date\")))";
     }
 
     private static string BuildChangedCellCountFormula(int excelRow, int firstVisibleCol)
@@ -2268,8 +2296,6 @@ class Program
         ws.Column(6).Width = 20;
         ws.Rows(1, 32).Height = 20;
         ws.Row(1).Height = 28;
-        ws.SheetView.FreezeRows(1);
-
         return ws;
     }
 
@@ -2420,8 +2446,6 @@ class Program
             );
         }
 
-        ws.SheetView.FreezeRows(headerRow);
-        ws.SheetView.FreezeColumns(4);
         ApplyCurrentListColumnWidths(ws, firstVisibleCol);
     }
 
@@ -2585,7 +2609,6 @@ class Program
 
         ws.Cell(2, 1).FormulaA1 = formula;
         ws.Column(1).Style.DateFormat.Format = "yyyy-mm-dd";
-        ws.SheetView.FreezeRows(1);
         ApplyDynamicListColumnWidths(ws, headers);
     }
 
@@ -2614,7 +2637,6 @@ class Program
         ws.Cell(2, 1).FormulaA1 = formula;
         ws.Column(1).Style.DateFormat.Format = "yyyy-mm-dd";
         ws.Column(2).Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
-        ws.SheetView.FreezeRows(1);
         ApplyChangedListColumnWidths(ws);
     }
 
@@ -2823,8 +2845,6 @@ class Program
         IXLRange range = ws.Range(1, 1, dataRowCount + 1, headers.Count);
         range.CreateTable(tableName);
 
-        ws.SheetView.FreezeRows(1);
-
         if (hideSheet)
             ws.Hide();
 
@@ -2868,6 +2888,13 @@ class Program
 
     private static void SetWorksheetCellValue(IXLCell cell, string header, string value)
     {
+        if (IsPostalCodeColumn(header))
+        {
+            cell.Value = FormatPostalCode(value);
+            cell.Style.NumberFormat.Format = "@";
+            return;
+        }
+
         if (IsTwoDecimalNumberColumn(header) && TryParseNumber(value, out decimal number))
         {
             cell.Value = (double)number;
@@ -2890,6 +2917,12 @@ class Program
         return header.Equals("OrderedArea", StringComparison.OrdinalIgnoreCase)
             || header.Equals("OrderedLength", StringComparison.OrdinalIgnoreCase)
             || header.Equals("OrderedWidth", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPostalCodeColumn(string header)
+    {
+        return header.EndsWith("PostalCode", StringComparison.OrdinalIgnoreCase)
+            || header.EndsWith("ZipCode", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryParseNumber(string value, out decimal number)
@@ -2989,7 +3022,6 @@ class Program
         IXLRange range = ws.Range(1, 1, rows.Count + 1, headers.Count);
         range.CreateTable();
 
-        ws.SheetView.FreezeRows(1);
         ApplyGenericColumnWidths(ws, headers);
     }
 
@@ -3418,16 +3450,49 @@ class Program
         string value = (rawValue ?? "").Trim();
 
         if (string.IsNullOrWhiteSpace(value))
-            return "NA";
+            return "";
 
         string normalized = value.ToUpperInvariant();
 
         return normalized switch
         {
             "Y" => "NEW",
+            "YES" => "NEW",
+            "TRUE" => "NEW",
+            "1" => "NEW",
             "N" => "",
+            "NO" => "",
+            "FALSE" => "",
+            "0" => "",
+            "NA" => "",
+            "N/A" => "",
             _ => value
         };
+    }
+
+    private static string FormatPostalCode(string rawValue)
+    {
+        string value = (rawValue ?? "").Trim();
+
+        if (string.IsNullOrWhiteSpace(value))
+            return "";
+
+        if (decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal numeric)
+            && numeric == Math.Truncate(numeric))
+        {
+            value = numeric.ToString("0", CultureInfo.InvariantCulture);
+        }
+
+        value = value.Trim();
+
+        if (Regex.IsMatch(value, @"^\d{1,4}$"))
+            return value.PadLeft(5, '0');
+
+        Match zipPlusFour = Regex.Match(value, @"^(\d{1,4})-(\d{4})$");
+        if (zipPlusFour.Success)
+            return $"{zipPlusFour.Groups[1].Value.PadLeft(5, '0')}-{zipPlusFour.Groups[2].Value}";
+
+        return value;
     }
 
     private static string FormatYesFlag(string rawValue)
