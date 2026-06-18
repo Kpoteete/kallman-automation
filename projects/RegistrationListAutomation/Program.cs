@@ -31,6 +31,7 @@ class Program
     private static readonly bool FlagMissingKeyData = true;
 
     private const string DashboardSheetName = "Date and Time Picker";
+    private const string PullDatePickerSheetName = "Date Picker";
     private const string CurrentRegistrationSheetName = "Current Registration List";
     private const string PreviousRegistrationSheetName = "Last Registration List";
     private const string PullDataSheetName = "data";
@@ -76,6 +77,10 @@ class Program
         "MainExhibitorCompany",
         "OrderedLength",
         "OrderedWidth",
+        "NewToShow",
+        "NewToMarket",
+        "USStateRepresentingCoExhibitors",
+        "NatureOfBusiness",
 
         "CompanyAddress1",
         "CompanyCity",
@@ -138,6 +143,10 @@ class Program
         ["MainExhibitorCompany"] = "Main Exhibitor",
         ["OrderedLength"] = "Booth Length",
         ["OrderedWidth"] = "Booth Width",
+        ["NewToShow"] = "New to Show",
+        ["NewToMarket"] = "New to Market",
+        ["USStateRepresentingCoExhibitors"] = "US State Representing Co-Exhibitors",
+        ["NatureOfBusiness"] = "Nature of Business",
 
         ["CompanyAddress1"] = "Company Address 1",
         ["CompanyCity"] = "Company City",
@@ -593,6 +602,10 @@ class Program
                 ["OrderedArea"] = GetValue(exhibitor, new[] { "OrderedArea", "Ordered Area" }, "U"),
                 ["OrderedLength"] = GetValue(exhibitor, new[] { "OrderedLength", "Ordered Length", "OrderfedLegnth" }, "S"),
                 ["OrderedWidth"] = GetValue(exhibitor, new[] { "OrderedWidth", "Ordered Width" }, "T"),
+                ["NewToShow"] = FormatNewFlag(GetValue(exhibitor, new[] { "ExhibitorUserFields.UserText30", "UserText30", "New to Show" }, "HE")),
+                ["NewToMarket"] = FormatNewFlag(GetValue(exhibitor, new[] { "ExhibitorUserFields.UserText07", "UserText07", "New to Market" }, "GH")),
+                ["USStateRepresentingCoExhibitors"] = FormatYesFlag(GetValue(exhibitor, new[] { "ExhibitorUserFields.UserText08", "UserText08", "US State Representing Co-Exhibitors" }, "GI")),
+                ["NatureOfBusiness"] = GetValue(exhibitor, new[] { "ExhibitorUserFields.UserText10", "UserText10", "Nature of Business" }, "GK"),
                 ["BoothNumber"] = GetValue(exhibitor, new[] { "BoothNumber", "Booth Number" }, "DZ"),
                 ["ExhibitorCategory"] = MapExhibitorCategories(rawExhibitorCategory, exhibitorCategoriesByCode),
                 ["MainExhibitorAccountCode"] = mainExhibitorAccountCode,
@@ -1338,17 +1351,44 @@ class Program
         using XLWorkbook workbook = new();
         workbook.CalculateMode = XLCalculateMode.Auto;
 
+        DateTime defaultPreviousPullDateTime = GetDefaultPreviousPullDateTime(BuildPullRunList(allPullRows, runStartedAt));
+
+        AddPullDatePickerWorksheet(workbook, defaultPreviousPullDateTime);
         AddPullDataWorksheet(workbook, allPullRows);
         AddFormulaRegistrationListWorksheet(
             workbook,
             currentPullRows,
             allPullRows.Count,
-            GetDefaultPreviousPullDateTime(BuildPullRunList(allPullRows, runStartedAt))
+            defaultPreviousPullDateTime
         );
 
-        workbook.Worksheet(CurrentRegistrationSheetName).Position = 1;
+        workbook.Worksheet(PullDatePickerSheetName).Position = 1;
+        workbook.Worksheet(CurrentRegistrationSheetName).Position = 2;
 
         SaveWorkbookWithRetry(workbook, outputPath);
+    }
+
+    private static void AddPullDatePickerWorksheet(XLWorkbook workbook, DateTime defaultComparePullDateTime)
+    {
+        IXLWorksheet ws = workbook.Worksheets.Add(PullDatePickerSheetName);
+
+        ws.Cell(1, 1).Value = "Date Picker";
+        ws.Cell(1, 1).Style.Font.Bold = true;
+        ws.Cell(1, 1).Style.Font.FontSize = 16;
+
+        ws.Cell(3, 1).Value = "Last registration pull:";
+        ws.Cell(3, 2).Value = defaultComparePullDateTime;
+        ws.Cell(3, 2).Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
+        ws.Cell(3, 2).Style.Fill.BackgroundColor = XLColor.FromArgb(255, 242, 204);
+        ws.Cell(3, 2).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+
+        ws.Cell(4, 2).Value = "Input the date and time of the last registration pull to compare against.";
+        ws.Cell(4, 2).Style.Font.FontColor = XLColor.FromArgb(117, 117, 117);
+        ws.Cell(4, 2).Style.Font.Italic = true;
+
+        ws.Range(3, 1, 3, 2).Style.Font.Bold = true;
+        ws.Column(1).Width = 24;
+        ws.Column(2).Width = 34;
     }
 
     private static void AddFormulaRegistrationListWorksheet(
@@ -1361,7 +1401,7 @@ class Program
 
         int headerRow = 1;
         int firstDataRow = 2;
-        int firstSourceCol = 4;
+        int firstSourceCol = 1;
         int sourceColCount = CurrentRegistrationListColumns.Count;
         int lastSourceCol = firstSourceCol + sourceColCount - 1;
         int changeStatusCol = lastSourceCol + 1;
@@ -1381,17 +1421,7 @@ class Program
         string priorValueLastRef = $"${IndexToColumnLetter(priorValueLastCol)}{firstDataRow}";
         string firstComparableCellRef = $"{IndexToColumnLetter(firstSourceCol + 1)}{firstDataRow}";
         string dataCompareKeyRange = BuildDataSheetRange(PullCompareKeyColumnName, dataFirstRow, dataLastRow);
-
-        ws.Cell(2, 1).Value = "Last registration pull:";
-        ws.Cell(2, 2).Value = defaultComparePullDateTime;
-        ws.Cell(2, 2).Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
-        ws.Cell(3, 2).Value = "< Input Date and Time of last reg pull";
-
-        ws.Range(2, 1, 2, 2).Style.Font.Bold = true;
-        ws.Cell(2, 2).Style.Fill.BackgroundColor = XLColor.FromArgb(255, 242, 204);
-        ws.Cell(2, 2).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
-        ws.Cell(3, 2).Style.Font.FontColor = XLColor.FromArgb(117, 117, 117);
-        ws.Cell(3, 2).Style.Font.Italic = true;
+        string compareDateTimeCellReference = $"{FormulaSheetName(PullDatePickerSheetName)}!$B$3";
 
         for (int c = 0; c < CurrentRegistrationListColumns.Count; c++)
         {
@@ -1428,7 +1458,7 @@ class Program
         for (int r = firstDataRow; r <= lastDataRow; r++)
         {
             string rowKeyRef = $"${IndexToColumnLetter(firstSourceCol)}{r}";
-            string compareKeyExpression = $"{rowKeyRef}&\"|\"&TEXT($B$2,\"yyyy-mm-dd hh:mm:ss\")";
+            string compareKeyExpression = $"{rowKeyRef}&\"|\"&TEXT({compareDateTimeCellReference},\"yyyy-mm-dd hh:mm:ss\")";
             string priorExistsRef = $"{IndexToColumnLetter(priorExistsCol)}{r}";
             string changedCountRef = $"{IndexToColumnLetter(changedCountCol)}{r}";
 
@@ -1472,11 +1502,7 @@ class Program
 
         ws.Columns(priorExistsCol, priorValueLastCol).Hide();
         ws.SheetView.FreezeRows(1);
-        ws.SheetView.FreezeColumns(firstSourceCol + 2);
 
-        ws.Column(1).Width = 22;
-        ws.Column(2).Width = 28;
-        ws.Column(3).Width = 4;
         ApplyRegistrationListColumnWidths(ws, firstSourceCol, changeStatusCol, changeDetailsCol);
     }
 
@@ -1577,6 +1603,13 @@ class Program
                 "PullDate" => 12,
                 "PullTime" => 12,
                 "PullDateTime" => 18,
+                "OrderedArea" => 12,
+                "OrderedLength" => 13,
+                "OrderedWidth" => 13,
+                "NewToShow" => 14,
+                "NewToMarket" => 14,
+                "USStateRepresentingCoExhibitors" => 34,
+                "NatureOfBusiness" => 24,
                 "CompanyName" => 24,
                 "CompanyBannerName" => 24,
                 "ExhibitorCategory" => 28,
@@ -1839,6 +1872,13 @@ class Program
                 "PullTime" => 12,
                 "PullDateTime" => 22,
                 "PullCompareKey" => 24,
+                "OrderedArea" => 12,
+                "OrderedLength" => 13,
+                "OrderedWidth" => 13,
+                "NewToShow" => 14,
+                "NewToMarket" => 14,
+                "USStateRepresentingCoExhibitors" => 34,
+                "NatureOfBusiness" => 24,
                 "CompanyName" => 28,
                 "CompanyBannerName" => 28,
                 _ when header.EndsWith("Email", StringComparison.OrdinalIgnoreCase) => 28,
@@ -2387,12 +2427,12 @@ class Program
 
     private static void AddCurrentListGroupHeaders(IXLWorksheet ws, int row, int firstVisibleCol)
     {
-        AddMergedGroupHeader(ws, row, firstVisibleCol + 0, firstVisibleCol + 9, "Booth / Company");
-        AddMergedGroupHeader(ws, row, firstVisibleCol + 10, firstVisibleCol + 13, "Company Address");
-        AddMergedGroupHeader(ws, row, firstVisibleCol + 14, firstVisibleCol + 19, "Catalog / Web");
-        AddMergedGroupHeader(ws, row, firstVisibleCol + 20, firstVisibleCol + 25, "Main Contact");
-        AddMergedGroupHeader(ws, row, firstVisibleCol + 26, firstVisibleCol + 31, "Booth Contact");
-        AddMergedGroupHeader(ws, row, firstVisibleCol + 32, firstVisibleCol + 37, "Press Contact");
+        AddMergedGroupHeader(ws, row, firstVisibleCol + 0, firstVisibleCol + 13, "Booth / Company");
+        AddMergedGroupHeader(ws, row, firstVisibleCol + 14, firstVisibleCol + 17, "Company Address");
+        AddMergedGroupHeader(ws, row, firstVisibleCol + 18, firstVisibleCol + 23, "Catalog / Web");
+        AddMergedGroupHeader(ws, row, firstVisibleCol + 24, firstVisibleCol + 29, "Main Contact");
+        AddMergedGroupHeader(ws, row, firstVisibleCol + 30, firstVisibleCol + 35, "Booth Contact");
+        AddMergedGroupHeader(ws, row, firstVisibleCol + 36, firstVisibleCol + 41, "Press Contact");
     }
 
     private static void AddMergedGroupHeader(IXLWorksheet ws, int row, int firstCol, int lastCol, string label)
@@ -2415,6 +2455,10 @@ class Program
             ["MainExhibitorCompany"] = 24,
             ["OrderedLength"] = 13,
             ["OrderedWidth"] = 13,
+            ["NewToShow"] = 14,
+            ["NewToMarket"] = 14,
+            ["USStateRepresentingCoExhibitors"] = 34,
+            ["NatureOfBusiness"] = 24,
             ["CompanyAddress1"] = 28,
             ["CompanyCity"] = 18,
             ["CompanyState"] = 14,
@@ -2824,6 +2868,13 @@ class Program
 
     private static void SetWorksheetCellValue(IXLCell cell, string header, string value)
     {
+        if (IsTwoDecimalNumberColumn(header) && TryParseNumber(value, out decimal number))
+        {
+            cell.Value = (double)number;
+            cell.Style.NumberFormat.Format = "0.00";
+            return;
+        }
+
         if (IsDateColumn(header) && TryParseDate(value, out DateTime date))
         {
             cell.Value = ShouldPreserveTime(header) ? date : date.Date;
@@ -2832,6 +2883,23 @@ class Program
         }
 
         cell.Value = value ?? "";
+    }
+
+    private static bool IsTwoDecimalNumberColumn(string header)
+    {
+        return header.Equals("OrderedArea", StringComparison.OrdinalIgnoreCase)
+            || header.Equals("OrderedLength", StringComparison.OrdinalIgnoreCase)
+            || header.Equals("OrderedWidth", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParseNumber(string value, out decimal number)
+    {
+        number = default;
+
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        return decimal.TryParse(value.Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out number);
     }
 
     private static bool IsDateColumn(string header)
@@ -3345,6 +3413,40 @@ class Program
         );
     }
 
+    private static string FormatNewFlag(string rawValue)
+    {
+        string value = (rawValue ?? "").Trim();
+
+        if (string.IsNullOrWhiteSpace(value))
+            return "NA";
+
+        string normalized = value.ToUpperInvariant();
+
+        return normalized switch
+        {
+            "Y" => "NEW",
+            "N" => "",
+            _ => value
+        };
+    }
+
+    private static string FormatYesFlag(string rawValue)
+    {
+        string value = (rawValue ?? "").Trim();
+
+        if (string.IsNullOrWhiteSpace(value))
+            return "";
+
+        string normalized = value.ToUpperInvariant();
+
+        return normalized switch
+        {
+            "Y" => "Yes",
+            "N" => "",
+            _ => value
+        };
+    }
+
     private static string FormatExhibitorStatus(string rawStatus)
     {
         string status = NormalizeId(rawStatus);
@@ -3352,6 +3454,7 @@ class Program
         return status switch
         {
             "2" => "Active",
+            "10" => "Direct",
             "22" => "Active Paid in Full",
             _ => status
         };
@@ -3395,6 +3498,10 @@ class Program
             "OrderedArea",
             "OrderedLength",
             "OrderedWidth",
+            "NewToShow",
+            "NewToMarket",
+            "USStateRepresentingCoExhibitors",
+            "NatureOfBusiness",
             "BoothNumber",
             "ExhibitorCategory",
             "MainExhibitorAccountCode",
