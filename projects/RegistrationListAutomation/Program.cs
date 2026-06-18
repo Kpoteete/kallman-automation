@@ -1361,8 +1361,6 @@ class Program
             allPullRows.Count,
             defaultPreviousPullDateTime
         );
-        AddCurrentFilterWorksheet(workbook, NewSinceSelectedDateSheetName, currentPullRows.Count, "New");
-        AddCurrentFilterWorksheet(workbook, ChangedSinceSelectedDateSheetName, currentPullRows.Count, "Changed");
 
         workbook.Worksheet(PullDatePickerSheetName).Position = 1;
         workbook.Worksheet(CurrentRegistrationSheetName).Position = 2;
@@ -1507,39 +1505,6 @@ class Program
         ws.Columns(priorExistsCol, priorValueLastCol).Hide();
 
         ApplyRegistrationListColumnWidths(ws, firstSourceCol, changeStatusCol, changeDetailsCol);
-    }
-
-    private static void AddCurrentFilterWorksheet(
-        XLWorkbook workbook,
-        string worksheetName,
-        int currentRowCount,
-        string changeStatus)
-    {
-        IXLWorksheet ws = workbook.Worksheets.Add(worksheetName);
-
-        List<string> headers = CurrentRegistrationListColumns
-            .Select(GetDisplayColumnName)
-            .Concat(new[] { "Change Status", "Change Details" })
-            .ToList();
-
-        AddSimpleHeaderRow(ws, headers);
-
-        int firstDataRow = 2;
-        int lastDataRow = Math.Max(firstDataRow, firstDataRow + Math.Max(currentRowCount, 1) - 1);
-        int lastCol = CurrentRegistrationListColumns.Count + 2;
-        int statusCol = CurrentRegistrationListColumns.Count + 1;
-        string lastColumnLetter = IndexToColumnLetter(lastCol);
-        string statusColumnLetter = IndexToColumnLetter(statusCol);
-        string sourceSheet = FormulaSheetName(CurrentRegistrationSheetName);
-        string escapedStatus = EscapeExcelString(changeStatus);
-        string emptyMessage = changeStatus.Equals("New", StringComparison.OrdinalIgnoreCase)
-            ? "No new exhibitors for selected date."
-            : "No changed exhibitors for selected date.";
-
-        ws.Cell(2, 1).FormulaA1 =
-            $"FILTER({sourceSheet}!$A${firstDataRow}:${lastColumnLetter}${lastDataRow},{sourceSheet}!${statusColumnLetter}${firstDataRow}:${statusColumnLetter}${lastDataRow}=\"{escapedStatus}\",\"{emptyMessage}\")";
-
-        ApplyDynamicListColumnWidths(ws, headers);
     }
 
     private static string BuildDataSheetRange(string internalHeader, int firstRow, int lastRow)
