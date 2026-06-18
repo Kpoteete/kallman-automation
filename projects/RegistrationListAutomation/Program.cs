@@ -1421,9 +1421,9 @@ class Program
         string priorValueLastRef = $"${IndexToColumnLetter(priorValueLastCol)}{firstDataRow}";
         string firstComparableCellRef = $"{IndexToColumnLetter(firstSourceCol + 1)}{firstDataRow}";
         string dataCompareKeyRange = BuildDataSheetRange(PullCompareKeyColumnName, dataFirstRow, dataLastRow);
+        string dataPullDateTimeRange = BuildDataSheetRange(PullDateTimeColumnName, dataFirstRow, dataLastRow);
         string compareDateCellReference = $"{FormulaSheetName(PullDatePickerSheetName)}!$B$3";
-        string pullDateTimeTableColumn = $"{PullDataTableName}[{GetDisplayColumnName(PullDateTimeColumnName)}]";
-        string latestPullDateTimeExpression = $"IFERROR(MAX(FILTER({pullDateTimeTableColumn},{pullDateTimeTableColumn}<({compareDateCellReference}+1))),\"\")";
+        string latestPullDateTimeExpression = $"IFERROR(AGGREGATE(14,6,{dataPullDateTimeRange}/({dataPullDateTimeRange}<({compareDateCellReference}+1)),1),\"\")";
 
         for (int c = 0; c < CurrentRegistrationListColumns.Count; c++)
         {
