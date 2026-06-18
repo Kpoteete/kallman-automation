@@ -51,6 +51,7 @@ class Program
     private const string ChangeHistoryTableName = "tblChangeHistory";
     private const string FieldMapTableName = "tblFieldMap";
     private const string PullDateTimeColumnName = "PullDateTime";
+    private const string PullCompareKeyColumnName = "PullCompareKey";
 
     private const int DashboardCompareDateRow = 7;
     private const int DashboardCompareDateColumn = 2;
@@ -178,6 +179,7 @@ class Program
         ["PullDate"] = "Pull date",
         ["PullTime"] = "Pull Time",
         ["PullDateTime"] = "Date and Time",
+        ["PullCompareKey"] = "Pull Compare Key",
         ["ExhibitingAsName"] = "Exhibiting As Name",
         ["Status"] = "Status",
         ["RunDate"] = "Run Date",
@@ -251,12 +253,17 @@ class Program
         "FirstSeenDate"
     }.Concat(CleanOutputColumns).ToList();
 
-    private static readonly List<string> PullDataWorkbookColumns = new List<string>()
+    private static readonly List<string> CurrentRegistrationListColumns = new List<string>()
     {
         "RowKey"
     }.Concat(CleanOutputColumns)
      .Concat(new[] { "PullDate", "PullTime", PullDateTimeColumnName })
      .ToList();
+
+    private static readonly List<string> PullDataWorkbookColumns =
+        CurrentRegistrationListColumns
+            .Concat(new[] { PullCompareKeyColumnName })
+            .ToList();
 
     private static readonly List<string> ChangeHistoryWorkbookColumns = new()
     {
@@ -1060,6 +1067,7 @@ class Program
                 ["PullTime"] = pullTime,
                 [PullDateTimeColumnName] = pullDateTimeText
             };
+            row[PullCompareKeyColumnName] = BuildPullCompareKey(GetDictionaryValue(row, "RowKey"), pullDateTime);
 
             foreach (string column in CleanOutputColumns)
             {
@@ -1203,7 +1211,18 @@ class Program
             row["PullTime"] = pullTime.ToString(@"hh\:mm\:ss");
 
         if (TryGetPullDateTime(row, out DateTime pullDateTime))
+        {
             row[PullDateTimeColumnName] = pullDateTime.ToString("yyyy-MM-dd HH:mm:ss");
+            row[PullCompareKeyColumnName] = BuildPullCompareKey(GetDictionaryValue(row, "RowKey"), pullDateTime);
+        }
+    }
+
+    private static string BuildPullCompareKey(string rowKey, DateTime pullDateTime)
+    {
+        if (string.IsNullOrWhiteSpace(rowKey))
+            return "";
+
+        return $"{rowKey}|{pullDateTime:yyyy-MM-dd HH:mm:ss}";
     }
 
     private static bool TryGetPullDateTime(Dictionary<string, string> row, out DateTime pullDateTime)
@@ -1322,7 +1341,8 @@ class Program
         AddPullDataWorksheet(workbook, allPullRows);
         AddFormulaRegistrationListWorksheet(
             workbook,
-            Math.Max(currentPullRows.Count, 1),
+            currentPullRows,
+            allPullRows.Count,
             GetDefaultPreviousPullDateTime(BuildPullRunList(allPullRows, runStartedAt))
         );
 
@@ -1333,7 +1353,8 @@ class Program
 
     private static void AddFormulaRegistrationListWorksheet(
         XLWorkbook workbook,
-        int currentRowCount,
+        List<Dictionary<string, string>> currentPullRows,
+        int allPullRowCount,
         DateTime defaultComparePullDateTime)
     {
         IXLWorksheet ws = workbook.Worksheets.Add(CurrentRegistrationSheetName);
@@ -1341,7 +1362,7 @@ class Program
         int headerRow = 1;
         int firstDataRow = 2;
         int firstSourceCol = 4;
-        int sourceColCount = PullDataWorkbookColumns.Count;
+        int sourceColCount = CurrentRegistrationListColumns.Count;
         int lastSourceCol = firstSourceCol + sourceColCount - 1;
         int changeStatusCol = lastSourceCol + 1;
         int changeDetailsCol = lastSourceCol + 2;
@@ -1349,15 +1370,17 @@ class Program
         int changedCountCol = lastSourceCol + 4;
         int priorValueFirstCol = lastSourceCol + 5;
         int priorValueLastCol = priorValueFirstCol + CleanOutputColumns.Count - 1;
-        int lastDataRow = firstDataRow + Math.Max(currentRowCount, 1) - 1;
+        int currentRowCount = Math.Max(currentPullRows.Count, 1);
+        int lastDataRow = firstDataRow + currentRowCount - 1;
+        int dataFirstRow = 2;
+        int dataLastRow = Math.Max(allPullRowCount + 1, dataFirstRow);
 
-        string rowKeyDisplay = GetDisplayColumnName("RowKey");
-        string pullDateTimeDisplay = GetDisplayColumnName(PullDateTimeColumnName);
         string firstDataRowKeyRef = $"${IndexToColumnLetter(firstSourceCol)}{firstDataRow}";
         string priorExistsFirstRef = $"${IndexToColumnLetter(priorExistsCol)}{firstDataRow}";
         string priorValueFirstRef = $"${IndexToColumnLetter(priorValueFirstCol)}{firstDataRow}";
         string priorValueLastRef = $"${IndexToColumnLetter(priorValueLastCol)}{firstDataRow}";
         string firstComparableCellRef = $"{IndexToColumnLetter(firstSourceCol + 1)}{firstDataRow}";
+        string dataCompareKeyRange = BuildDataSheetRange(PullCompareKeyColumnName, dataFirstRow, dataLastRow);
 
         ws.Cell(2, 1).Value = "Last registration pull:";
         ws.Cell(2, 2).Value = defaultComparePullDateTime;
@@ -1370,9 +1393,9 @@ class Program
         ws.Cell(3, 2).Style.Font.FontColor = XLColor.FromArgb(117, 117, 117);
         ws.Cell(3, 2).Style.Font.Italic = true;
 
-        for (int c = 0; c < PullDataWorkbookColumns.Count; c++)
+        for (int c = 0; c < CurrentRegistrationListColumns.Count; c++)
         {
-            string internalHeader = PullDataWorkbookColumns[c];
+            string internalHeader = CurrentRegistrationListColumns[c];
             ws.Cell(headerRow, firstSourceCol + c).Value = GetDisplayColumnName(internalHeader);
         }
 
@@ -1386,31 +1409,44 @@ class Program
             ws.Cell(headerRow, priorValueFirstCol + i).Value = $"Helper Prior {GetDisplayColumnName(CleanOutputColumns[i])}";
         }
 
-        ws.Cell(firstDataRow, firstSourceCol).FormulaA1 =
-            $"FILTER({PullDataTableName},{PullDataTableName}[{pullDateTimeDisplay}]=MAX({PullDataTableName}[{pullDateTimeDisplay}]),\"No data\")";
+        for (int r = 0; r < currentPullRows.Count; r++)
+        {
+            int excelRow = firstDataRow + r;
+            Dictionary<string, string> sourceRow = currentPullRows[r];
+
+            for (int c = 0; c < CurrentRegistrationListColumns.Count; c++)
+            {
+                string internalHeader = CurrentRegistrationListColumns[c];
+                SetRegistrationListCellValue(
+                    ws.Cell(excelRow, firstSourceCol + c),
+                    internalHeader,
+                    GetDictionaryValue(sourceRow, internalHeader)
+                );
+            }
+        }
 
         for (int r = firstDataRow; r <= lastDataRow; r++)
         {
             string rowKeyRef = $"${IndexToColumnLetter(firstSourceCol)}{r}";
-            string compareDateTimeRef = "$B$2";
+            string compareKeyExpression = $"{rowKeyRef}&\"|\"&TEXT($B$2,\"yyyy-mm-dd hh:mm:ss\")";
             string priorExistsRef = $"{IndexToColumnLetter(priorExistsCol)}{r}";
             string changedCountRef = $"{IndexToColumnLetter(changedCountCol)}{r}";
 
             ws.Cell(r, priorExistsCol).FormulaA1 =
-                $"IF({rowKeyRef}=\"\",FALSE,COUNTIFS({PullDataTableName}[{rowKeyDisplay}],{rowKeyRef},{PullDataTableName}[{pullDateTimeDisplay}],{compareDateTimeRef})>0)";
+                $"IF({rowKeyRef}=\"\",FALSE,ISNUMBER(MATCH({compareKeyExpression},{dataCompareKeyRange},0)))";
 
             for (int i = 0; i < CleanOutputColumns.Count; i++)
             {
-                string displayName = GetDisplayColumnName(CleanOutputColumns[i]);
+                string dataValueRange = BuildDataSheetRange(CleanOutputColumns[i], dataFirstRow, dataLastRow);
                 ws.Cell(r, priorValueFirstCol + i).FormulaA1 =
-                    $"IF({priorExistsRef},IFERROR(INDEX(FILTER({PullDataTableName}[{displayName}],({PullDataTableName}[{rowKeyDisplay}]={rowKeyRef})*({PullDataTableName}[{pullDateTimeDisplay}]={compareDateTimeRef})),1),\"\"),\"\")";
+                    $"IF({priorExistsRef},IFERROR(INDEX({dataValueRange},MATCH({compareKeyExpression},{dataCompareKeyRange},0)),\"\"),\"\")";
             }
 
             ws.Cell(r, changedCountCol).FormulaA1 = BuildChangeCountFormula(r, firstSourceCol + 1, priorValueFirstCol, priorExistsRef);
             ws.Cell(r, changeStatusCol).FormulaA1 =
                 $"IF({rowKeyRef}=\"\",\"\",IF(NOT({priorExistsRef}),\"New\",IF({changedCountRef}>0,\"Changed\",\"\")))";
             ws.Cell(r, changeDetailsCol).FormulaA1 =
-                BuildChangeDetailsFormula(r, firstSourceCol + 1, priorValueFirstCol, priorExistsRef, changedCountRef);
+                BuildChangeDetailsFormula(rowKeyRef, r, firstSourceCol + 1, priorValueFirstCol, priorExistsRef, changedCountRef);
         }
 
         ws.Range(headerRow, firstSourceCol, headerRow, changeDetailsCol).Style.Font.Bold = true;
@@ -1444,6 +1480,46 @@ class Program
         ApplyRegistrationListColumnWidths(ws, firstSourceCol, changeStatusCol, changeDetailsCol);
     }
 
+    private static string BuildDataSheetRange(string internalHeader, int firstRow, int lastRow)
+    {
+        int columnNumber = PullDataWorkbookColumns.FindIndex(column => column.Equals(internalHeader, StringComparison.OrdinalIgnoreCase)) + 1;
+
+        if (columnNumber <= 0)
+            throw new InvalidOperationException($"Data column not found: {internalHeader}");
+
+        string columnLetter = IndexToColumnLetter(columnNumber);
+        return $"{FormulaSheetName(PullDataSheetName)}!${columnLetter}${firstRow}:${columnLetter}${lastRow}";
+    }
+
+    private static void SetRegistrationListCellValue(IXLCell cell, string header, string value)
+    {
+        if (header.Equals("PullDate", StringComparison.OrdinalIgnoreCase)
+            && TryParseDate(value, out DateTime pullDate))
+        {
+            cell.Value = pullDate.Date;
+            cell.Style.DateFormat.Format = "yyyy-mm-dd";
+            return;
+        }
+
+        if (header.Equals("PullTime", StringComparison.OrdinalIgnoreCase)
+            && TryParseTime(value, out TimeSpan pullTime))
+        {
+            cell.Value = pullTime.TotalDays;
+            cell.Style.NumberFormat.Format = "hh:mm:ss";
+            return;
+        }
+
+        if (header.Equals(PullDateTimeColumnName, StringComparison.OrdinalIgnoreCase)
+            && DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out DateTime pullDateTime))
+        {
+            cell.Value = pullDateTime;
+            cell.Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
+            return;
+        }
+
+        SetWorksheetCellValue(cell, header, value);
+    }
+
     private static string BuildChangeCountFormula(
         int row,
         int firstCurrentValueCol,
@@ -1463,6 +1539,7 @@ class Program
     }
 
     private static string BuildChangeDetailsFormula(
+        string rowKeyRef,
         int row,
         int firstCurrentValueCol,
         int firstPriorValueCol,
@@ -1478,11 +1555,11 @@ class Program
             string priorCell = $"{IndexToColumnLetter(firstPriorValueCol + i)}{row}";
 
             detailParts.Add(
-                $"IF({currentCell}<>{priorCell},\"{displayName}: \"&IF({priorCell}=\"\",\"(blank)\",{priorCell})&\" -> \"&IF({currentCell}=\"\",\"(blank)\",{currentCell}),\"\")"
+                $"IF({currentCell}<>{priorCell},\"{displayName}: \"&IF({priorCell}=\"\",\"(blank)\",{priorCell})&\" -> \"&IF({currentCell}=\"\",\"(blank)\",{currentCell})&\"; \",\"\")"
             );
         }
 
-        return $"IF($D{row}=\"\",\"\",IF(NOT({priorExistsRef}),\"New exhibitor\",IF({changedCountRef}=0,\"\",TEXTJOIN(\"; \",TRUE,{string.Join(",", detailParts)}))))";
+        return $"IF({rowKeyRef}=\"\",\"\",IF(NOT({priorExistsRef}),\"New exhibitor\",IF({changedCountRef}=0,\"\",{string.Join("&", detailParts)})))";
     }
 
     private static void ApplyRegistrationListColumnWidths(
@@ -1491,9 +1568,9 @@ class Program
         int changeStatusCol,
         int changeDetailsCol)
     {
-        for (int i = 0; i < PullDataWorkbookColumns.Count; i++)
+        for (int i = 0; i < CurrentRegistrationListColumns.Count; i++)
         {
-            string header = PullDataWorkbookColumns[i];
+            string header = CurrentRegistrationListColumns[i];
             double width = header switch
             {
                 "RowKey" => 14,
@@ -1761,6 +1838,7 @@ class Program
                 "PullDate" => 14,
                 "PullTime" => 12,
                 "PullDateTime" => 22,
+                "PullCompareKey" => 24,
                 "CompanyName" => 28,
                 "CompanyBannerName" => 28,
                 _ when header.EndsWith("Email", StringComparison.OrdinalIgnoreCase) => 28,
@@ -1769,6 +1847,9 @@ class Program
             };
 
             ws.Column(i + 1).Width = width;
+
+            if (header.Equals(PullCompareKeyColumnName, StringComparison.OrdinalIgnoreCase))
+                ws.Column(i + 1).Hide();
         }
     }
 
@@ -1923,14 +2004,22 @@ class Program
 
         if (header.Equals(PullDateTimeColumnName, StringComparison.OrdinalIgnoreCase))
         {
-            int row = cell.Address.RowNumber;
-            int pullDateCol = PullDataWorkbookColumns.FindIndex(column => column.Equals("PullDate", StringComparison.OrdinalIgnoreCase)) + 1;
-            int pullTimeCol = PullDataWorkbookColumns.FindIndex(column => column.Equals("PullTime", StringComparison.OrdinalIgnoreCase)) + 1;
-            string pullDateCell = $"{IndexToColumnLetter(pullDateCol)}{row}";
-            string pullTimeCell = $"{IndexToColumnLetter(pullTimeCol)}{row}";
+            if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out DateTime pullDateTime))
+            {
+                cell.Value = pullDateTime;
+                cell.Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
+            }
+            else
+            {
+                cell.Value = value ?? "";
+            }
 
-            cell.FormulaA1 = $"IF(OR({pullDateCell}=\"\",{pullTimeCell}=\"\"),\"\",{pullDateCell}+{pullTimeCell})";
-            cell.Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
+            return;
+        }
+
+        if (header.Equals(PullCompareKeyColumnName, StringComparison.OrdinalIgnoreCase))
+        {
+            cell.Value = value ?? "";
             return;
         }
 
