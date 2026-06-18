@@ -1,112 +1,191 @@
-# Account Import Solution v9
+# Momentus/Ungerboeck Account + Contact Import Console App
 
-This version builds on the working relationship-endpoint import.
+This project implements a production-safe phased import flow for accounts and contacts using the Momentus/Ungerboeck API SDK and ClosedXML.
 
-## v9 changes
+## Safety defaults
 
-- After Phase 5 archive is created, files used or created in Phase 0 through Phase 4 are deleted so the working folders stay clean.
-- Account matching uses the restored uniqueness rule: `(Company Name OR Website Root Domain) + Country + Market Segment Major`.
-- Market Segment Major is used for duplicate/account matching and is now written to organization/company accounts through `Accounts.Add` when present in the import file. Market Segment Minor is also written when present.
-- Website matching normalizes roots such as `https://www.example.com/page` to `example.com`.
-- Near the end, the program prompts for an affiliation/interest code. If entered, it adds that code to all account codes touched by the run and all contact codes created by the run.
-- Phase 5 creates a team update workbook in the archive folder. This workbook summarizes what happened, existing accounts, new accounts, contacts, relationships, updates, failures/skips, and full audit detail.
+- `DryRun` defaults to `true` in `appsettings.json`.
+- Dry-run reads Excel files, searches Momentus, prepares output files, and writes audit logs.
+- Dry-run does **not** create or update anything in Momentus.
+- Live mode requires both:
+  1. Running with `--live` or changing `DryRun` to `false`.
+  2. Typing `IMPORT` at the Phase 3 live confirmation prompt.
+- The original Phase 0 workbook is never overwritten or deleted.
+- Every generated workbook uses a timestamped file name.
+- Phase 5 copies all session files into a timestamped archive folder. It does not delete Phase 0.
 
-## Required config values before live
+## Project structure
 
-Open `Program/appsettings.json` and set the real relationship type code:
+```text
+C:\kwi-automations\projects\AccountImport
+├── Program
+│   ├── AccountImport.csproj
+│   ├── Program.cs
+│   ├── appsettings.json
+│   ├── Models
+│   └── Services
+├── Phase 0
+├── Phase 1 - lookup and disregard
+├── Phase 2 Lookup and Match
+├── Phase 3 - import
+├── Phase 4 - verify
+└── Phase 5 - complete
+```
+
+## Important adjustment point
+
+`Services/MomentusSdkApiService.cs` is the only place that touches the Momentus/Ungerboeck SDK. The public SDK exposes an `ApiClient`, JWT authorization, and `Accounts` endpoint methods, but tenant/version-specific model property names for fields like Class, Market Segment Major, Country, and the parent-account link may differ.
+
+Adjust these values in `appsettings.json` if your SDK/model uses different names:
 
 ```json
-"Relationship": {
-  "CreateRelationshipAfterContact": true,
-  "RelationshipType": "CTA",
-  "EventSalesDesignation": "P"
+"MomentusFields": {
+  "Organization": "Organization",
+  "AccountCode": "AccountCode",
+  "AccountName": "Name",
+  "Class": "Class",
+  "AccountClassValue": "Account",
+  "ContactClassValue": "Contact",
+  "MarketSegmentMajor": "MarketSegmentMajor",
+  "Country": "Country",
+  "ContactEmail": "Email",
+  "ParentAccountCode": "AccountCode"
 }
 ```
 
-Replace `CTA` with your actual EV876 relationship type code.
+The current contact-parent link follows your provided contact field mapping where Column V is `AccountCode`. If your SDK distinguishes a contact's own account code from its parent organization account code, change `ParentAccountCode` before live import.
 
-## Run
+## Install packages
+
+From the `Program` folder:
 
 ```powershell
 cd "C:\kwi-automations\projects\AccountImport\Program"
-dotnet clean
 dotnet restore
-dotnet build
+```
+
+The `.csproj` references:
+
+- `ClosedXML` for Excel handling
+- `Ungerboeck.Api.Sdk` for Momentus/Ungerboeck API calls
+
+If your Momentus/Ungerboeck version is not compatible with the referenced SDK version, install the package version whose second version segment matches your Momentus/Ungerboeck version.
+
+Example:
+
+```powershell
+dotnet remove package Ungerboeck.Api.Sdk
+dotnet add package Ungerboeck.Api.Sdk --version <your-compatible-version>
+```
+
+## Set environment variables in Windows
+
+Use user-level variables:
+
+```powershell
+setx MOMENTUS_APIUSER "KYLEPAPI"
+setx MOMENTUS_SECRET "8c247eb8-2342-452a-95c3-cf22bd1c6a56"
+setx MOMENTUS_KEY "e2b97782-08d7-40f3-bdbc-fbef5095154c"
+```
+
+Close and reopen PowerShell after using `setx`, then confirm:
+
+```powershell
+$env:MOMENTUS_APIUSER
+$env:MOMENTUS_SECRET
+$env:MOMENTUS_KEY
+```
+
+For a one-session test only:
+
+```powershell
+$env:MOMENTUS_APIUSER = "your-api-user-id"
+$env:MOMENTUS_SECRET = "your-secret-guid"
+$env:MOMENTUS_KEY = "your-key-guid"
+```
+
+## Run in dry-run mode
+
+Dry-run is the default.
+
+```powershell
+cd "C:\kwi-automations\projects\AccountImport\Program"
 dotnet run -- --dry-run
 ```
 
-For live:
+You can also omit `--dry-run` if `appsettings.json` still has `"DryRun": true`.
+
+## Run in live mode
 
 ```powershell
+cd "C:\kwi-automations\projects\AccountImport\Program"
 dotnet run -- --live
 ```
 
-Auto-run is enabled. In live mode, the program runs Phase 1 through Phase 5 without Y confirmations and without requiring `IMPORT` before Phase 3 writes. It still prompts for configured run values such as Import ID and affiliation/interest code.
+The app still performs Phase 1 and Phase 2 with human review checkpoints first. Before Phase 3 writes, it prints:
 
-At the affiliation prompt, enter the interest/affiliation code to apply to the accounts and contacts from the run, or press Enter to skip.
+```text
+LIVE MODE ENABLED. This will write to Momentus.
+```
 
+It then requires:
 
-## v9b notes
+```text
+IMPORT
+```
 
-- Relationship type is preset to `CTA`.
-- The affiliation/interest prompt now applies to organization accounts touched in the run, contacts created in the run, and duplicate contacts found during Phase 1 when their existing contact AccountCode is returned by Momentus.
+Any other input stops safely before writes.
 
-## v9b update
+## Output behavior
 
-- Relationship type code is preset to `CTA` in `appsettings.json`.
-- The affiliation/interest prompt now includes duplicate contacts found in Phase 1 when Momentus returns their existing contact AccountCode.
-- The final affiliation target list is deduped across touched organization accounts, newly created contacts, and duplicate existing contacts.
+Phase 1 creates:
 
-## v10 account update and relaxed matching behavior
+- duplicate contacts workbook
+- non-duplicate contacts workbook
+- optional review-required workbook for blank/invalid emails or lookup failures
 
-Existing account updates are conservative. When a company account already exists, the program retrieves the account and fills only blank allowed fields from the import workbook. It does not overwrite existing nonblank Momentus values.
+Phase 2 creates:
 
-The allowed fields are controlled in `appsettings.json` under `ExistingAccountUpdates.AllowedFields`. MarketSegmentMajor and MarketSegmentMinor are now included so blank existing account segment fields can be filled safely from the import file.
+- existing organization accounts workbook
+- new organization accounts needed workbook
+- optional review-required workbook for missing account key fields or lookup failures
 
-Company duplicate checking still requires country and Market Segment Major. The company-name part is now more flexible: exact name, website root domain, and relaxed canonical company name can match. Relaxed matching removes parenthetical acronyms, punctuation, and common legal suffixes.
+Phase 4 creates:
 
-## v10g notes
+- audit CSV
+- final annotated existing-accounts workbook
+- final annotated new-accounts workbook
 
-### Updated template layout
-The code now follows the new template layout where formula/helper columns have moved to the right. It reads key values by Row 2 friendly headers instead of relying only on old fixed column positions.
+Phase 5 creates a timestamped archive folder and copies every file used or created during the session.
 
+## Audit log fields
 
-## v10i note - Type Code copied to contacts
+The audit CSV contains:
 
-`ExcelService.ContactFieldMappings` now includes `("Type Code", "Type")`, so the same template Type Code value is sent to Momentus on contact creation.
+- Timestamp
+- Phase
+- DryRun
+- SourceFileName
+- RowNumber
+- CompanyName
+- ContactEmail
+- ActionAttempted
+- Result
+- AccountCode
+- MomentusResponseMessage
+- ErrorMessage
 
-## v10o change
+## Required Excel assumptions
 
-The team update workbook now has exactly six tabs:
+- Row 1 contains API field names.
+- Row 2 contains friendly field names.
+- Data starts at Row 3.
+- Column A = Company Name.
+- Column B = Account Code.
+- Column F = Market Segment Major.
+- Column O = Country.
+- Column V through AL = contact fields.
+- Column AC = Contact Email.
+- Column AM = Duplicate Found.
 
-1. Accounts Imported
-2. Accounts Changed
-3. Accounts Not Imported
-4. Contacts Imported
-5. Contacts Changed
-6. Contacts Not Imported
-
-The detailed audit log is still generated separately.
-
-
-## v10l country-code handling
-
-This version treats the template `Country Code` and `Contact Country Code` columns as the source of truth. If those columns contain `***`, the program keeps `***` exactly as entered and sends that value to Momentus.
-
-If a code column is blank and the visible country name is used as fallback, USA / U.S. / United States now map to `***` instead of `US`.
-
-You do not need to edit the Excel template for this change. Keep using the code columns generated by the template.
-
-
-## v10l update - Market segments
-
-This version writes `MarketSegmentMajor` and `MarketSegmentMinor` to organization/company accounts when the import file provides those values. New organization accounts receive the segment values during creation. Existing matched organization accounts use the same blank-fill rule as other fields: if the Momentus field is blank and the import file has a value, the program fills it; it does not overwrite nonblank Momentus segment values. Contacts are not assigned market segments.
-
-## v10m updates
-
-This version applies `MarketSegmentMajor` and `MarketSegmentMinor` to both organization/company accounts and contact accounts. It also prompts at the start of each run for an optional Import ID. The Import ID must be alphanumeric and no more than 7 characters. When entered, it is written to the direct Momentus field `Keyword` on every account/contact touched by the run. Existing `Keyword` values are overwritten with the current run's Import ID.
-
-
-## v10p auto-run change
-
-The program no longer pauses after Phase 1, Phase 2, or Phase 4, and it no longer requires typing `IMPORT` before Phase 3 live writes. Use `--dry-run` for testing and `--live` only when the Phase 0 workbook is ready to import.
+The app validates the contact API header mapping from Column V through AL before processing.
