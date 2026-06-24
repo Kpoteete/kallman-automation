@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -6,6 +6,8 @@ using System.Text.RegularExpressions;
 using ClosedXML.Excel;
 using CsvHelper;
 using CsvHelper.Configuration;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
 
 class Program
 {
@@ -31,6 +33,7 @@ class Program
     private static readonly bool FlagMissingKeyData = true;
 
     private const string DashboardSheetName = "Date Picker";
+    private const string InstructionsSheetName = "Instructions";
     private const string PullDatePickerSheetName = "Date Picker";
     private const string CurrentRegistrationSheetName = "Current Registration List";
     private const string PreviousRegistrationSheetName = "Last Registration List";
@@ -53,10 +56,26 @@ class Program
     private const string FieldMapTableName = "tblFieldMap";
     private const string PullDateTimeColumnName = "PullDateTime";
     private const string PullCompareKeyColumnName = "PullCompareKey";
+    private const string DefaultStatusCriteria = "All registered statuses";
+    private static readonly List<string> StatusCriteriaOptions = new()
+    {
+        "Active Paid in Full only",
+        "Active only",
+        "All registered statuses"
+    };
+
+    private static readonly XLColor KallmanBlue = XLColor.FromArgb(36, 50, 105);
+    private static readonly XLColor KallmanWhite = XLColor.White;
+    private static readonly XLColor KallmanSilver = XLColor.FromArgb(164, 170, 193);
+    private static readonly XLColor KallmanRed = XLColor.FromArgb(218, 26, 50);
+    private static readonly XLColor KallmanLightSilver = XLColor.FromArgb(232, 234, 241);
+    private static readonly XLColor KallmanLightRed = XLColor.FromArgb(253, 226, 230);
 
     private const int DashboardCompareDateRow = 7;
     private const int DashboardCompareDateColumn = 2;
     private static readonly string CompareDateCellReference = $"'{DashboardSheetName}'!$B${DashboardCompareDateRow}";
+    private static readonly string PullDatePickerComparePullDateTimeCellReference = $"'{PullDatePickerSheetName}'!$B$5";
+    private static readonly string PullDatePickerStatusCriteriaCellReference = $"'{PullDatePickerSheetName}'!$B$7";
 
     private static readonly HashSet<string> ActiveExhibitorStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -427,19 +446,25 @@ class Program
                 string outputFileName = $"{safeEventName} Registration List.xlsx";
                 string outputPath = Path.Combine(outputRoot, outputFileName);
 
+                string savedStatusCriteria = ReadSavedStatusCriteria(outputPath);
                 List<Dictionary<string, string>> existingPullRows = ReadExistingPullRowsFromWorkbook(outputPath);
-                List<Dictionary<string, string>> currentPullRows = BuildPullRows(currentFullRows, runStartedAt);
-                List<Dictionary<string, string>> allPullRows = existingPullRows
+                List<Dictionary<string, string>> filteredCurrentFullRows = FilterRowsByStatusCriteria(currentFullRows, savedStatusCriteria);
+                List<Dictionary<string, string>> filteredExistingPullRows = FilterRowsByStatusCriteria(existingPullRows, savedStatusCriteria);
+                List<Dictionary<string, string>> currentPullRows = BuildPullRows(filteredCurrentFullRows, runStartedAt);
+                List<Dictionary<string, string>> allPullRows = filteredExistingPullRows
                     .Concat(currentPullRows)
                     .ToList();
 
                 Console.WriteLine($"Existing data pull rows: {existingPullRows.Count:N0}");
+                Console.WriteLine($"Status criteria: {savedStatusCriteria}");
+                Console.WriteLine($"Rows included by status criteria: {filteredCurrentFullRows.Count:N0} of {currentFullRows.Count:N0}");
                 Console.WriteLine($"Rows appended to data: {currentPullRows.Count:N0}");
                 Console.WriteLine($"Total data pull rows after append: {allPullRows.Count:N0}");
+                Console.WriteLine("Rendering workbook sheets: Date Picker, data, Current Registration List.");
 
                 Stopwatch workbookStopwatch = Stopwatch.StartNew();
 
-                CreateRegistrationListWorkbook(outputPath, currentPullRows, allPullRows, runStartedAt);
+                CreateRegistrationListWorkbook(outputPath, currentPullRows, allPullRows, runStartedAt, savedStatusCriteria);
 
                 workbookStopwatch.Stop();
                 Console.WriteLine($"Workbook render/save time: {workbookStopwatch.Elapsed:mm\\:ss}");
@@ -1165,6 +1190,72 @@ class Program
         return rows;
     }
 
+    private static string ReadSavedStatusCriteria(string workbookPath)
+    {
+        if (!File.Exists(workbookPath))
+            return DefaultStatusCriteria;
+
+        try
+        {
+            using FileStream fileStream = new(
+                workbookPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete
+            );
+
+            using XLWorkbook workbook = new(fileStream);
+
+            IXLWorksheet? ws = workbook.Worksheets
+                .FirstOrDefault(sheet => sheet.Name.Equals(PullDatePickerSheetName, StringComparison.OrdinalIgnoreCase));
+
+            if (ws == null)
+                return DefaultStatusCriteria;
+
+            return NormalizeStatusCriteria(ws.Cell(7, 2).GetFormattedString());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not read saved status criteria from {Path.GetFileName(workbookPath)}. Using default. {ex.Message}");
+            return DefaultStatusCriteria;
+        }
+    }
+
+    private static string NormalizeStatusCriteria(string value)
+    {
+        string cleaned = (value ?? "").Trim();
+
+        return StatusCriteriaOptions.FirstOrDefault(option =>
+            option.Equals(cleaned, StringComparison.OrdinalIgnoreCase)) ?? DefaultStatusCriteria;
+    }
+
+    private static List<Dictionary<string, string>> FilterRowsByStatusCriteria(
+        List<Dictionary<string, string>> rows,
+        string statusCriteria)
+    {
+        string normalizedCriteria = NormalizeStatusCriteria(statusCriteria);
+
+        return rows
+            .Where(row => RowMatchesStatusCriteria(row, normalizedCriteria))
+            .ToList();
+    }
+
+    private static bool RowMatchesStatusCriteria(Dictionary<string, string> row, string statusCriteria)
+    {
+        string status = GetDictionaryValue(row, "ExhibitorStatus");
+
+        if (string.IsNullOrWhiteSpace(status))
+            status = GetDictionaryValue(row, "Status");
+
+        return NormalizeStatusCriteria(statusCriteria) switch
+        {
+            "All registered statuses" => true,
+            "Active only" => status.Equals("Active", StringComparison.OrdinalIgnoreCase),
+            "Active Paid in Full only" => status.Equals("Active Paid in Full", StringComparison.OrdinalIgnoreCase),
+            _ => status.Equals("Active Paid in Full", StringComparison.OrdinalIgnoreCase)
+        };
+    }
+
     private static string MapPullDataHeader(string rawHeader)
     {
         string cleanedHeader = CleanHeader(rawHeader);
@@ -1346,47 +1437,154 @@ class Program
         string outputPath,
         List<Dictionary<string, string>> currentPullRows,
         List<Dictionary<string, string>> allPullRows,
-        DateTime runStartedAt)
+        DateTime runStartedAt,
+        string savedStatusCriteria)
     {
         using XLWorkbook workbook = new();
         workbook.CalculateMode = XLCalculateMode.Auto;
 
-        DateTime defaultPreviousPullDateTime = GetDefaultPreviousPullDateTime(BuildPullRunList(allPullRows, runStartedAt));
+        List<PullRunInfo> pullRuns = BuildPullRunList(allPullRows, runStartedAt);
+        DateTime defaultPreviousPullDateTime = GetDefaultPreviousPullDateTime(pullRuns);
 
-        AddPullDatePickerWorksheet(workbook, defaultPreviousPullDateTime);
+        AddInstructionsWorksheet(workbook);
+        Console.WriteLine("  Added Instructions sheet.");
+        AddPullDatePickerWorksheet(workbook, defaultPreviousPullDateTime, allPullRows.Count, pullRuns, savedStatusCriteria);
+        Console.WriteLine("  Added Date Picker sheet.");
         AddPullDataWorksheet(workbook, allPullRows);
+        Console.WriteLine($"  Added data sheet with {allPullRows.Count:N0} rows.");
         AddFormulaRegistrationListWorksheet(
             workbook,
             currentPullRows,
             allPullRows.Count,
             defaultPreviousPullDateTime
         );
+        Console.WriteLine($"  Added Current Registration List sheet with {currentPullRows.Count:N0} rows.");
 
-        workbook.Worksheet(PullDatePickerSheetName).Position = 1;
-        workbook.Worksheet(CurrentRegistrationSheetName).Position = 2;
+        workbook.Worksheet(InstructionsSheetName).Position = 1;
+        workbook.Worksheet(PullDatePickerSheetName).Position = 2;
+        workbook.Worksheet(CurrentRegistrationSheetName).Position = 3;
 
         SaveWorkbookWithRetry(workbook, outputPath);
     }
 
-    private static void AddPullDatePickerWorksheet(XLWorkbook workbook, DateTime defaultComparePullDateTime)
+    private static void AddInstructionsWorksheet(XLWorkbook workbook)
+    {
+        IXLWorksheet ws = workbook.Worksheets.Add(InstructionsSheetName);
+
+        ws.Cell(1, 1).Value = "How to use this registration list";
+        ws.Cell(1, 1).Style.Font.Bold = true;
+        ws.Cell(1, 1).Style.Font.FontSize = 18;
+        ws.Cell(1, 1).Style.Font.FontColor = KallmanWhite;
+        ws.Cell(1, 1).Style.Fill.BackgroundColor = KallmanBlue;
+
+        List<string> instructions = new()
+        {
+            "1. Open the Date Picker sheet.",
+            "2. Pick a Compare to date from the dropdown. The workbook uses the latest pull on or before that date.",
+            "3. Pick the Registered status criteria for this show. Default is All registered statuses. Save the workbook. The next automation run rebuilds this show using that saved setting.",
+            "4. Open Current Registration List. The first columns show Change Status and Change Details.",
+            "5. Use the filter arrows on Change Status to focus on New or Changed rows.",
+            "6. To send one sheet somewhere else without formulas: right-click the sheet tab, choose Move or Copy, choose (new book), check Create a copy, then click OK.",
+            "7. In the new workbook, press Ctrl+A, copy, then use Paste Values. Save that new workbook wherever it is needed.",
+            "8. Do not edit the data sheet unless you are intentionally changing the pull history."
+        };
+
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            ws.Cell(i + 3, 1).Value = instructions[i];
+            ws.Cell(i + 3, 1).Style.Alignment.WrapText = true;
+        }
+
+        ws.Cell(13, 1).Value = "Status criteria choices";
+        ws.Cell(13, 1).Style.Font.Bold = true;
+        ws.Cell(14, 1).Value = "Active Paid in Full only";
+        ws.Cell(15, 1).Value = "Active only";
+        ws.Cell(16, 1).Value = "All registered statuses";
+
+        ws.Column(1).Width = 110;
+        ws.Range(1, 1, 16, 1).Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
+        ws.Range(3, 1, 16, 1).Style.Fill.BackgroundColor = KallmanLightSilver;
+        ws.Range(3, 1, 16, 1).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+    }
+
+    private static void AddPullDatePickerWorksheet(
+        XLWorkbook workbook,
+        DateTime defaultComparePullDateTime,
+        int allPullRowCount,
+        List<PullRunInfo> pullRuns,
+        string savedStatusCriteria)
     {
         IXLWorksheet ws = workbook.Worksheets.Add(PullDatePickerSheetName);
 
         ws.Cell(1, 1).Value = "Date Picker";
         ws.Cell(1, 1).Style.Font.Bold = true;
-        ws.Cell(1, 1).Style.Font.FontSize = 16;
+        ws.Cell(1, 1).Style.Font.FontSize = 18;
+        ws.Cell(1, 1).Style.Font.FontColor = KallmanWhite;
+        ws.Cell(1, 1).Style.Fill.BackgroundColor = KallmanBlue;
 
-        ws.Cell(3, 1).Value = "Compare to date:";
-        ws.Cell(3, 2).Value = defaultComparePullDateTime.Date;
-        ws.Cell(3, 2).Style.DateFormat.Format = "yyyy-mm-dd";
-        ws.Cell(3, 2).Style.Fill.BackgroundColor = XLColor.FromArgb(255, 242, 204);
+        ws.Cell(3, 1).Value = "Compare to pull:";
+        ws.Cell(3, 2).Value = defaultComparePullDateTime;
+        ws.Cell(3, 2).Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
+        ws.Cell(3, 2).Style.Fill.BackgroundColor = KallmanLightSilver;
         ws.Cell(3, 2).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
 
-        ws.Cell(4, 2).Value = "Pick a date. The workbook compares against the latest pull on or before that date.";
+        ws.Cell(4, 2).Value = "Pick an exact pull from the dropdown.";
         ws.Cell(4, 2).Style.Font.FontColor = XLColor.FromArgb(117, 117, 117);
         ws.Cell(4, 2).Style.Font.Italic = true;
 
-        ws.Range(3, 1, 3, 2).Style.Font.Bold = true;
+        string pullDateTimeRange = BuildDataSheetRange(PullDateTimeColumnName, 2, Math.Max(allPullRowCount + 1, 2));
+        ws.Cell(5, 1).Value = "Compare pull used:";
+        ws.Cell(5, 2).FormulaA1 = "$B$3";
+        ws.Cell(5, 2).Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
+
+        ws.Cell(7, 1).Value = "Registered status criteria:";
+        ws.Cell(7, 2).Value = NormalizeStatusCriteria(savedStatusCriteria);
+        ws.Cell(7, 2).Style.Fill.BackgroundColor = KallmanLightSilver;
+        ws.Cell(7, 2).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+
+        ws.Cell(8, 2).Value = "Saved per file. The next automation run uses this to decide which statuses are pulled into this workbook.";
+        ws.Cell(8, 2).Style.Font.FontColor = XLColor.FromArgb(117, 117, 117);
+        ws.Cell(8, 2).Style.Font.Italic = true;
+
+        List<DateTime> selectablePulls = pullRuns
+            .Select(run => run.PullDateTime)
+            .Distinct()
+            .OrderBy(pullDateTime => pullDateTime)
+            .ToList();
+
+        if (selectablePulls.Count == 0)
+            selectablePulls.Add(defaultComparePullDateTime);
+
+        int compareDateListStartRow = 3;
+        int compareDateListColumn = 5;
+        for (int i = 0; i < selectablePulls.Count; i++)
+        {
+            IXLCell listCell = ws.Cell(compareDateListStartRow + i, compareDateListColumn);
+            listCell.Value = selectablePulls[i];
+            listCell.Style.DateFormat.Format = "yyyy-mm-dd hh:mm:ss";
+        }
+
+        ws.Cell(3, 2).CreateDataValidation().List(
+            ws.Range(compareDateListStartRow, compareDateListColumn, compareDateListStartRow + selectablePulls.Count - 1, compareDateListColumn),
+            true);
+
+        int statusListStartRow = 3;
+        int statusListColumn = 6;
+        for (int i = 0; i < StatusCriteriaOptions.Count; i++)
+        {
+            ws.Cell(statusListStartRow + i, statusListColumn).Value = StatusCriteriaOptions[i];
+        }
+
+        ws.Cell(7, 2).CreateDataValidation().List(
+            ws.Range(statusListStartRow, statusListColumn, statusListStartRow + StatusCriteriaOptions.Count - 1, statusListColumn),
+            true);
+
+        ws.Columns(compareDateListColumn, statusListColumn).Hide();
+
+        ws.Range(3, 1, 7, 2).Style.Font.Bold = true;
+        ws.Range(3, 1, 8, 2).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        ws.Range(3, 1, 8, 1).Style.Fill.BackgroundColor = KallmanBlue;
+        ws.Range(3, 1, 8, 1).Style.Font.FontColor = KallmanWhite;
         ws.Column(1).Width = 24;
         ws.Column(2).Width = 34;
     }
@@ -1401,14 +1599,14 @@ class Program
 
         int headerRow = 1;
         int firstDataRow = 2;
-        int firstSourceCol = 1;
+        int changeStatusCol = 1;
+        int changeDetailsCol = 2;
+        int firstSourceCol = 3;
         int sourceColCount = CurrentRegistrationListColumns.Count;
         int lastSourceCol = firstSourceCol + sourceColCount - 1;
-        int changeStatusCol = lastSourceCol + 1;
-        int changeDetailsCol = lastSourceCol + 2;
-        int priorExistsCol = lastSourceCol + 3;
-        int changedCountCol = lastSourceCol + 4;
-        int priorValueFirstCol = lastSourceCol + 5;
+        int priorExistsCol = lastSourceCol + 1;
+        int changedCountCol = lastSourceCol + 2;
+        int priorValueFirstCol = lastSourceCol + 3;
         int priorValueLastCol = priorValueFirstCol + CleanOutputColumns.Count - 1;
         int currentRowCount = Math.Max(currentPullRows.Count, 1);
         int lastDataRow = firstDataRow + currentRowCount - 1;
@@ -1421,9 +1619,7 @@ class Program
         string priorValueLastRef = $"${IndexToColumnLetter(priorValueLastCol)}{firstDataRow}";
         string firstComparableCellRef = $"{IndexToColumnLetter(firstSourceCol + 1)}{firstDataRow}";
         string dataCompareKeyRange = BuildDataSheetRange(PullCompareKeyColumnName, dataFirstRow, dataLastRow);
-        string dataPullDateTimeRange = BuildDataSheetRange(PullDateTimeColumnName, dataFirstRow, dataLastRow);
-        string compareDateCellReference = $"{FormulaSheetName(PullDatePickerSheetName)}!$B$3";
-        string latestPullDateTimeExpression = $"IFERROR(AGGREGATE(14,6,{dataPullDateTimeRange}/({dataPullDateTimeRange}<({compareDateCellReference}+1)),1),\"\")";
+        string comparePullDateTimeCellReference = PullDatePickerComparePullDateTimeCellReference;
 
         for (int c = 0; c < CurrentRegistrationListColumns.Count; c++)
         {
@@ -1460,7 +1656,7 @@ class Program
         for (int r = firstDataRow; r <= lastDataRow; r++)
         {
             string rowKeyRef = $"${IndexToColumnLetter(firstSourceCol)}{r}";
-            string compareKeyExpression = $"{rowKeyRef}&\"|\"&TEXT({latestPullDateTimeExpression},\"yyyy-mm-dd hh:mm:ss\")";
+            string compareKeyExpression = $"{rowKeyRef}&\"|\"&TEXT({comparePullDateTimeCellReference},\"yyyy-mm-dd hh:mm:ss\")";
             string priorExistsRef = $"{IndexToColumnLetter(priorExistsCol)}{r}";
             string changedCountRef = $"{IndexToColumnLetter(changedCountCol)}{r}";
 
@@ -1471,7 +1667,7 @@ class Program
             {
                 string dataValueRange = BuildDataSheetRange(CleanOutputColumns[i], dataFirstRow, dataLastRow);
                 ws.Cell(r, priorValueFirstCol + i).FormulaA1 =
-                    $"IF({priorExistsRef},IFERROR(INDEX({dataValueRange},MATCH({compareKeyExpression},{dataCompareKeyRange},0)),\"\"),\"\")";
+                    $"IF({priorExistsRef},IFERROR(INDEX({dataValueRange},MATCH({compareKeyExpression},{dataCompareKeyRange},0))&\"\",\"\"),\"\")";
             }
 
             ws.Cell(r, changedCountCol).FormulaA1 = BuildChangeCountFormula(r, firstSourceCol + 1, priorValueFirstCol, priorExistsRef);
@@ -1481,27 +1677,30 @@ class Program
                 BuildChangeDetailsFormula(rowKeyRef, r, firstSourceCol + 1, priorValueFirstCol, priorExistsRef, changedCountRef);
         }
 
-        ws.Range(headerRow, firstSourceCol, headerRow, changeDetailsCol).Style.Font.Bold = true;
-        ws.Range(headerRow, firstSourceCol, headerRow, changeDetailsCol).Style.Fill.BackgroundColor = XLColor.FromArgb(217, 217, 217);
-        ws.Range(headerRow, firstSourceCol, headerRow, changeDetailsCol).Style.Alignment.WrapText = true;
+        ws.Range(headerRow, changeStatusCol, headerRow, lastSourceCol).Style.Font.Bold = true;
+        ws.Range(headerRow, changeStatusCol, headerRow, lastSourceCol).Style.Fill.BackgroundColor = KallmanBlue;
+        ws.Range(headerRow, changeStatusCol, headerRow, lastSourceCol).Style.Font.FontColor = KallmanWhite;
+        ws.Range(headerRow, changeStatusCol, headerRow, lastSourceCol).Style.Alignment.WrapText = true;
+        ws.Cell(headerRow, changeStatusCol).Style.Fill.BackgroundColor = KallmanRed;
         ws.Range(headerRow, priorExistsCol, headerRow, priorValueLastCol).Style.Font.Bold = true;
-        ws.Range(headerRow, priorExistsCol, headerRow, priorValueLastCol).Style.Fill.BackgroundColor = XLColor.FromArgb(217, 217, 217);
+        ws.Range(headerRow, priorExistsCol, headerRow, priorValueLastCol).Style.Fill.BackgroundColor = KallmanSilver;
 
-        ws.Range(firstDataRow, firstSourceCol, lastDataRow, changeDetailsCol).Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
+        ws.Range(firstDataRow, changeStatusCol, lastDataRow, lastSourceCol).Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
         ws.Range(firstDataRow, changeDetailsCol, lastDataRow, changeDetailsCol).Style.Alignment.WrapText = true;
         ws.Range(firstDataRow, firstSourceCol, lastDataRow, lastSourceCol).Style.Border.InsideBorder = XLBorderStyleValues.Hair;
-        ws.Range(firstDataRow, firstSourceCol, lastDataRow, changeDetailsCol).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        ws.Range(firstDataRow, changeStatusCol, lastDataRow, lastSourceCol).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
 
-        ws.Range(firstDataRow, firstSourceCol, lastDataRow, changeDetailsCol)
+        ws.Range(firstDataRow, changeStatusCol, lastDataRow, lastSourceCol)
             .AddConditionalFormat()
             .WhenIsTrue($"AND({firstDataRowKeyRef}<>\"\",{priorExistsFirstRef}=FALSE)")
             .Fill.SetBackgroundColor(XLColor.FromArgb(226, 239, 218));
 
         ws.Range(firstDataRow, firstSourceCol + 1, lastDataRow, firstSourceCol + CleanOutputColumns.Count)
             .AddConditionalFormat()
-            .WhenIsTrue($"AND({firstDataRowKeyRef}<>\"\",{priorExistsFirstRef}=TRUE,{firstComparableCellRef}<>INDEX({priorValueFirstRef}:{priorValueLastRef},1,COLUMN()-COLUMN(${IndexToColumnLetter(firstSourceCol + 1)}${firstDataRow})+1))")
-            .Fill.SetBackgroundColor(XLColor.FromArgb(255, 242, 204));
+            .WhenIsTrue($"AND({firstDataRowKeyRef}<>\"\",{priorExistsFirstRef}=TRUE,{firstComparableCellRef}&\"\"<>INDEX({priorValueFirstRef}:{priorValueLastRef},1,COLUMN()-COLUMN(${IndexToColumnLetter(firstSourceCol + 1)}${firstDataRow})+1)&\"\")")
+            .Fill.SetBackgroundColor(KallmanLightRed);
 
+        ws.Range(headerRow, changeStatusCol, lastDataRow, lastSourceCol).SetAutoFilter();
         ws.Columns(priorExistsCol, priorValueLastCol).Hide();
 
         ApplyRegistrationListColumnWidths(ws, firstSourceCol, changeStatusCol, changeDetailsCol);
@@ -1559,7 +1758,7 @@ class Program
         {
             string currentCell = $"{IndexToColumnLetter(firstCurrentValueCol + i)}{row}";
             string priorCell = $"{IndexToColumnLetter(firstPriorValueCol + i)}{row}";
-            comparisons.Add($"N({currentCell}<>{priorCell})");
+            comparisons.Add($"N({currentCell}&\"\"<>{priorCell}&\"\")");
         }
 
         return $"IF({priorExistsRef},SUM({string.Join(",", comparisons)}),0)";
@@ -1582,7 +1781,7 @@ class Program
             string priorCell = $"{IndexToColumnLetter(firstPriorValueCol + i)}{row}";
 
             detailParts.Add(
-                $"IF({currentCell}<>{priorCell},\"{displayName}: \"&IF({priorCell}=\"\",\"(blank)\",{priorCell})&\" -> \"&IF({currentCell}=\"\",\"(blank)\",{currentCell})&\"; \",\"\")"
+                $"IF({currentCell}&\"\"<>{priorCell}&\"\",\"{displayName}: \"&IF({priorCell}&\"\"=\"\",\"(blank)\",{priorCell})&\" -> \"&IF({currentCell}&\"\"=\"\",\"(blank)\",{currentCell})&\"; \",\"\")"
             );
         }
 
@@ -3766,11 +3965,44 @@ class Program
         {
             workbook.SaveAs(tempPath);
             ReplaceFileWithRetry(tempPath, outputPath);
+            PrepareWorkbookForExcelRecalculation(outputPath);
         }
         finally
         {
             TryDeleteFile(tempPath);
         }
+    }
+
+    private static void PrepareWorkbookForExcelRecalculation(string workbookPath)
+    {
+        using SpreadsheetDocument document = SpreadsheetDocument.Open(workbookPath, true);
+        WorkbookPart? workbookPart = document.WorkbookPart;
+
+        if (workbookPart == null)
+            return;
+
+        foreach (WorksheetPart worksheetPart in workbookPart.WorksheetParts)
+        {
+            foreach (Cell cell in worksheetPart.Worksheet.Descendants<Cell>().Where(cell => cell.CellFormula != null))
+            {
+                cell.CellValue?.Remove();
+            }
+
+            worksheetPart.Worksheet.Save();
+        }
+
+        if (workbookPart.CalculationChainPart != null)
+            workbookPart.DeletePart(workbookPart.CalculationChainPart);
+
+        CalculationProperties calculationProperties =
+            workbookPart.Workbook.CalculationProperties
+            ?? workbookPart.Workbook.AppendChild(new CalculationProperties());
+
+        calculationProperties.CalculationMode = CalculateModeValues.Auto;
+        calculationProperties.FullCalculationOnLoad = true;
+        calculationProperties.ForceFullCalculation = true;
+        calculationProperties.CalculationOnSave = true;
+        workbookPart.Workbook.Save();
     }
 
     private static FileStream AcquireRunLock(string outputRoot)
