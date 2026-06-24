@@ -1,3 +1,3 @@
 @echo off
-cd /d "S:\IT\automation\AccountsDataIntegrityReport"
+cd /d "C:\Automations\Production\kallman-automation\projects\AccountsDataIntegrityReport"
 dotnet run
