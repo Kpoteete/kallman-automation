@@ -1,0 +1,46 @@
+﻿{
+    "qaCopy":  "C:\\kwi-automations\\projects\\Schedule of events\\Schedule of Events V8.5 - Codex QA Working Copy.xlsx",
+    "rows":  {
+                 "category":  18,
+                 "timed":  57,
+                 "tbd":  58,
+                 "allDay":  59
+             },
+    "scheduleSlots":  {
+                          "timed":  "                                             1 ",
+                          "tbd":  "  ",
+                          "allDay":  "  "
+                      },
+    "daily":  {
+                  "timedAppears":  true,
+                  "tbdAppears":  true,
+                  "allDayAppearsInScheduleArea":  true
+              },
+    "liveViews":  {
+                      "weeklyCalendarNew":  true,
+                      "locationSchedule":  true,
+                      "sponsors":  true,
+                      "speakers":  true,
+                      "requiredAttendees":  true
+                  },
+    "runOfShow":  {
+                      "selectedEvent":  "QA Test Timed Event",
+                      "selectedRow":  "57",
+                      "start":  "11:30 AM",
+                      "end":  "11:45 AM",
+                      "firstMinute":  "11:30 AM",
+                      "secondMinute":  "11:31 AM"
+                  },
+    "instructions":  {
+                         "title":  "Schedule Workbook Instructions",
+                         "hasRunOfShow":  true
+                     },
+    "errorSpotChecks":  {
+                            "weeklyA4":  "Mon 7/20",
+                            "sponsorsA4":  "Boeing, Lockheed Martin, General Atomics Aeronautical",
+                            "speakersA4":  "UK Prime Minister",
+                            "requiredA4":  "Charlie Duke",
+                            "locationA4":  "Australian Pavilion (Hall 3, Booth 3311)"
+                        },
+    "reopenWeeklyStillContainsTimedEvent":  true
+}

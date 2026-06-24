@@ -1,0 +1,41 @@
+﻿{
+    "output":  "C:\\kwi-automations\\projects\\Schedule of events\\Schedule of Events V8.7 - Codex Recalculated Template.xlsx",
+    "checks":  {
+                   "Data Input":  {
+                                      "A1":  "Internal Schedule of Events - Data Input",
+                                      "A4":  "Farnborough 2026"
+                                  },
+                   "Daily Schedule":  {
+                                          "A1":  "",
+                                          "A4":  "Daily Schedule - Farnborough 2026\n07/23/26"
+                                      },
+                   "Weekly Calendar New":  {
+                                               "A1":  "Weekly Event List - Timed Events",
+                                               "A4":  "Mon 7/20"
+                                           },
+                   "Location Schedule":  {
+                                             "A1":  "Location Schedule",
+                                             "A4":  "Australian Pavilion (Hall 3, Booth 3311)"
+                                         },
+                   "Sponsors":  {
+                                    "A1":  "Sponsored Events",
+                                    "A4":  "Boeing, Lockheed Martin, General Atomics Aeronautical"
+                                },
+                   "Speakers":  {
+                                    "A1":  "Speaker Schedule",
+                                    "A4":  "UK Prime Minister"
+                                },
+                   "Required Attendees":  {
+                                              "A1":  "Required Attendees Schedule",
+                                              "A4":  "Charlie Duke"
+                                          },
+                   "Run of Show":  {
+                                       "A1":  "Run of Show - Minute by Minute",
+                                       "A4":  "Event"
+                                   },
+                   "Instructions":  {
+                                        "A1":  "Schedule Workbook Instructions",
+                                        "A4":  "Data Input"
+                                    }
+               }
+}

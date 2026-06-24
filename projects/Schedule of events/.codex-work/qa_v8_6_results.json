@@ -1,0 +1,61 @@
+{
+  "template": "C:\\kwi-automations\\projects\\Schedule of events\\Schedule of Events V8.6 - Codex Clean Tested Template.xlsx",
+  "qaCopy": "C:\\kwi-automations\\projects\\Schedule of events\\Schedule of Events V8.6 - Codex QA Working Copy.xlsx",
+  "validation": {
+    "categorySourceJ57": "Category: QA Template Category",
+    "newReferenceCategory": "QA Template Category"
+  },
+  "scheduleSlots": {
+    "timedOne": "1",
+    "timedTwo": "2",
+    "timedThree": "3",
+    "tbd": "",
+    "allDay": ""
+  },
+  "daily": {
+    "timedOne": true,
+    "timedTwo": true,
+    "timedThree": true,
+    "tbd": true,
+    "allDay": true,
+    "tbdDuplicateCount": 1,
+    "allDayCount": 1
+  },
+  "liveViews": {
+    "weeklyCalendarNew": true,
+    "locationSchedule": true,
+    "sponsors": true,
+    "speakers": true,
+    "requiredAttendees": true
+  },
+  "runOfShow": {
+    "selectedEvent": "QA V8.6 Timed One",
+    "selectedRow": "57",
+    "start": "11:30 AM",
+    "end": "12:00 PM",
+    "firstMinute": "11:30 AM",
+    "secondMinute": "11:31 AM"
+  },
+  "instructions": {
+    "title": "Schedule Workbook Instructions",
+    "hasDataInput": true,
+    "hasRunOfShow": true
+  },
+  "spotChecks": {
+    "weeklyA4": "Mon 7/20",
+    "locationA4": "Australian Pavilion (Hall 3, Booth 3311)",
+    "sponsorsA4": "Boeing, Lockheed Martin, General Atomics Aeronautical",
+    "speakersA4": "UK Prime Minister",
+    "requiredA4": "Charlie Duke",
+    "dailyAllDayTitle": "All-Day Events",
+    "dailyAllDayFirstType": "All Day"
+  },
+  "reopenWeeklyStillContainsTimedEvent": true,
+  "reopenDailyTbdCount": 1,
+  "cleanTemplateOpened": true,
+  "cleanTemplateOpenCheck": {
+    "InstructionsTitle": "Schedule Workbook Instructions",
+    "DailyBottomTitle": "All-Day Events",
+    "WeeklyTitle": "Weekly Event List - Timed Events"
+  }
+}

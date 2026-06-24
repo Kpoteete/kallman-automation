@@ -1,0 +1,148 @@
+{"kind":"deck","id":"pr/nq318e","name":"Deck"}
+{"kind":"layout","layoutId":"075bc3fd-3e37-4dab-9afa-f5486e6c7d7f","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"4100bd84-768b-46f0-b98e-cb75edd0f894","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/crl82y","slide":1,"title":"Event Schedule Template","textShapes":5}
+{"kind":"shape","id":"sh/uxc3ylc7","slide":1,"bbox":[0,0,1280,90]}
+{"kind":"textbox","id":"sh/1kre1w7m","slide":1,"text":"Event Schedule Template","textPreview":"Event Schedule Template","textChars":23,"textLines":1,"bbox":[86,170,820,72]}
+{"kind":"textbox","id":"sh/c3ylc7u5","slide":1,"text":"Training deck and operating overview for the final clean tested workbook.","textPreview":"Training deck and operating overview for the final clean tested workbook.","textChars":73,"textLines":1,"bbox":[90,260,740,70]}
+{"kind":"shape","id":"sh/j6tovaho","slide":1,"bbox":[880,170,300,300]}
+{"kind":"textbox","id":"sh/ulwval87","slide":1,"text":"Final","textPreview":"Final","textChars":5,"textLines":1,"bbox":[930,222,200,70]}
+{"kind":"textbox","id":"sh/1cfa9w3m","slide":1,"text":"Clean tested template","textPreview":"Clean tested template","textChars":21,"textLines":1,"bbox":[925,308,210,54]}
+{"kind":"textbox","id":"sh/crmhk3q5","slide":1,"text":"Daily schedule | Weekly calendar | Run of show | Printable views","textPreview":"Daily schedule | Weekly calendar | Run of show | Printable views","textChars":64,"textLines":1,"bbox":[90,584,900,34]}
+{"kind":"notes","id":"nt/crl82y","slide":1,"text":""}
+{"kind":"slide","id":"sl/4y9wd5","slide":2,"title":"EVENT SCHEDULE TEMPLATE","textShapes":15}
+{"kind":"textbox","id":"sh/6dcbulwv","slide":2,"text":"EVENT SCHEDULE TEMPLATE","textPreview":"EVENT SCHEDULE TEMPLATE","textChars":23,"textLines":1,"bbox":[72,30,420,26]}
+{"kind":"textbox","id":"sh/d4vmtwra","slide":2,"text":"What the workbook does","textPreview":"What the workbook does","textChars":22,"textLines":1,"bbox":[72,70,900,76]}
+{"kind":"shape","id":"sh/oj2t83it","slide":2,"bbox":[72,150,160,4]}
+{"kind":"textbox","id":"sh/vmtwra5g","slide":2,"text":"One Data Input table drives every printable view.","textPreview":"One Data Input table drives every printable view.","textChars":49,"textLines":1,"bbox":[72,180,880,38]}
+{"kind":"shape","id":"sh/61032lsz","slide":2,"bbox":[90,260,340,126]}
+{"kind":"shape","id":"sh/dsji5sne","slide":2,"bbox":[112,282,42,42]}
+{"kind":"textbox","id":"sh/o7qpg3ex","slide":2,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[112,287,42,28]}
+{"kind":"textbox","id":"sh/vahoza1g","slide":2,"text":"Enter event data","textPreview":"Enter event data","textChars":16,"textLines":1,"bbox":[170,282,236,32]}
+{"kind":"textbox","id":"sh/6tovahoz","slide":2,"text":"Use Data Input as the single source of truth.","textPreview":"Use Data Input as the single source of truth.","textChars":45,"textLines":1,"bbox":[170,318,236,54]}
+{"kind":"shape","id":"sh/c3ylc7u5","slide":2,"bbox":[470,260,360,126]}
+{"kind":"shape","id":"sh/1kre1w7m","slide":2,"bbox":[492,282,42,42]}
+{"kind":"textbox","id":"sh/uxc3ylc7","slide":2,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[492,287,42,28]}
+{"kind":"textbox","id":"sh/ji5snelo","slide":2,"text":"Choose the right view","textPreview":"Choose the right view","textChars":21,"textLines":1,"bbox":[550,282,256,32]}
+{"kind":"textbox","id":"sh/crmhk3q5","slide":2,"text":"Daily, weekly, location, sponsor, speaker, attendee, or run-of-show.","textPreview":"Daily, weekly, location, sponsor, speaker, attendee, or run-of-show.","textChars":68,"textLines":1,"bbox":[550,318,256,54]}
+{"kind":"shape","id":"sh/1cfa9w3m","slide":2,"bbox":[870,260,320,126]}
+{"kind":"shape","id":"sh/ulwval87","slide":2,"bbox":[892,282,42,42]}
+{"kind":"textbox","id":"sh/j6tovaho","slide":2,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[892,287,42,28]}
+{"kind":"textbox","id":"sh/8nqxs72x","slide":2,"text":"Print or brief from it","textPreview":"Print or brief from it","textChars":22,"textLines":1,"bbox":[950,282,216,32]}
+{"kind":"textbox","id":"sh/18jqh0fe","slide":2,"text":"Each view is built for quick reading by people on the move.","textPreview":"Each view is built for quick reading by people on the move.","textChars":59,"textLines":1,"bbox":[950,318,216,54]}
+{"kind":"shape","id":"sh/1032lszq","slide":2,"bbox":[98,468,10,10]}
+{"kind":"textbox","id":"sh/cfa9w3m9","slide":2,"text":"Formula-driven views update when rows are added to the Excel table.","textPreview":"Formula-driven views update when rows are added to the Excel table.","textChars":67,"textLines":1,"bbox":[122,460,980,48]}
+{"kind":"shape","id":"sh/judg7ads","slide":2,"bbox":[98,522,10,10]}
+{"kind":"textbox","id":"sh/u9knih4b","slide":2,"text":"TBD and all-day items are kept out of the hourly grid.","textPreview":"TBD and all-day items are kept out of the hourly grid.","textChars":54,"textLines":1,"bbox":[122,514,980,48]}
+{"kind":"shape","id":"sh/1orytsvu","slide":2,"bbox":[98,576,10,10]}
+{"kind":"textbox","id":"sh/c7u54zid","slide":2,"text":"Schedule slots handle overlapping events across columns.","textPreview":"Schedule slots handle overlapping events across columns.","textChars":56,"textLines":1,"bbox":[122,568,980,48]}
+{"kind":"notes","id":"nt/4y9wd5","slide":2,"text":""}
+{"kind":"slide","id":"sl/k5so9c","slide":3,"title":"EVENT SCHEDULE TEMPLATE","textShapes":8}
+{"kind":"textbox","id":"sh/w7mp0bi9","slide":3,"text":"EVENT SCHEDULE TEMPLATE","textPreview":"EVENT SCHEDULE TEMPLATE","textChars":23,"textLines":1,"bbox":[72,30,420,26]}
+{"kind":"textbox","id":"sh/7mp0bi9s","slide":3,"text":"Data Input is the source of truth","textPreview":"Data Input is the source of truth","textChars":33,"textLines":1,"bbox":[72,70,900,76]}
+{"kind":"shape","id":"sh/e1w7mp0b","slide":3,"bbox":[72,150,160,4]}
+{"kind":"shape","id":"sh/pg3ex0nu","slide":3,"bbox":[86,196,1090,96]}
+{"kind":"textbox","id":"sh/wval87ed","slide":3,"text":"Enter one event per row. Keep dates, times, location, category, people, sponsors, and status as complete and consistent as possible.","textPreview":"Enter one event per row. Keep dates, times, location, category, people, sponsors, and status as complete and consistent as possible.","textChars":132,"textLines":1,"bbox":[116,222,1030,52]}
+{"kind":"shape","id":"sh/7adsji5s","slide":3,"bbox":[112,348,10,10]}
+{"kind":"textbox","id":"sh/epkzupwb","slide":3,"text":"Use dropdowns from Reference for repeatable fields.","textPreview":"Use dropdowns from Reference for repeatable fields.","textChars":51,"textLines":1,"bbox":[136,340,980,48]}
+{"kind":"shape","id":"sh/lc7u54zi","slide":3,"bbox":[112,396,10,10]}
+{"kind":"textbox","id":"sh/wra5gbq1","slide":3,"text":"Use numeric start/end times for timed events.","textPreview":"Use numeric start/end times for timed events.","textChars":45,"textLines":1,"bbox":[136,388,980,48]}
+{"kind":"shape","id":"sh/upwb2hwf","slide":3,"bbox":[112,444,10,10]}
+{"kind":"textbox","id":"sh/nap4r65w","slide":3,"text":"Use TBD when the time is unknown.","textPreview":"Use TBD when the time is unknown.","textChars":33,"textLines":1,"bbox":[136,436,980,48]}
+{"kind":"shape","id":"sh/cvixczed","slide":3,"bbox":[112,492,10,10]}
+{"kind":"textbox","id":"sh/5gbq1ory","slide":3,"text":"Use All Day for true all-day items.","textPreview":"Use All Day for true all-day items.","textChars":35,"textLines":1,"bbox":[136,484,980,48]}
+{"kind":"shape","id":"sh/udg7adsj","slide":3,"bbox":[112,540,10,10]}
+{"kind":"textbox","id":"sh/nyd0z610","slide":3,"text":"Use comma-separated names for multiple speakers, attendees, or sponsors.","textPreview":"Use comma-separated names for multiple speakers, attendees, or sponsors.","textChars":72,"textLines":1,"bbox":[136,532,980,48]}
+{"kind":"notes","id":"nt/k5so9c","slide":3,"text":""}
+{"kind":"slide","id":"sl/9hjtcb","slide":4,"title":"EVENT SCHEDULE TEMPLATE","textShapes":12}
+{"kind":"textbox","id":"sh/47y1kre1","slide":4,"text":"EVENT SCHEDULE TEMPLATE","textPreview":"EVENT SCHEDULE TEMPLATE","textChars":23,"textLines":1,"bbox":[72,30,420,26]}
+{"kind":"textbox","id":"sh/bm58z25k","slide":4,"text":"Daily and weekly views","textPreview":"Daily and weekly views","textChars":22,"textLines":1,"bbox":[72,70,900,76]}
+{"kind":"shape","id":"sh/m1cfa9w3","slide":4,"bbox":[72,150,160,4]}
+{"kind":"shape","id":"sh/tgfmlkjm","slide":4,"bbox":[92,208,500,340]}
+{"kind":"textbox","id":"sh/4vmtwra5","slide":4,"text":"Daily Schedule","textPreview":"Daily Schedule","textChars":14,"textLines":1,"bbox":[122,238,430,40]}
+{"kind":"shape","id":"sh/bat47y1k","slide":4,"bbox":[128,320,10,10]}
+{"kind":"textbox","id":"sh/mp0bi9s3","slide":4,"text":"One day at a time","textPreview":"One day at a time","textChars":17,"textLines":1,"bbox":[152,312,400,48]}
+{"kind":"shape","id":"sh/t83itgfm","slide":4,"bbox":[128,368,10,10]}
+{"kind":"textbox","id":"sh/4nap4r65","slide":4,"text":"Timed events in hourly grid","textPreview":"Timed events in hourly grid","textChars":27,"textLines":1,"bbox":[152,360,400,48]}
+{"kind":"shape","id":"sh/u9knih4b","slide":4,"bbox":[128,416,10,10]}
+{"kind":"textbox","id":"sh/judg7ads","slide":4,"text":"Overlaps move into slots 1, 2, 3...","textPreview":"Overlaps move into slots 1, 2, 3...","textChars":35,"textLines":1,"bbox":[152,408,400,48]}
+{"kind":"shape","id":"sh/cfa9w3m9","slide":4,"bbox":[128,464,10,10]}
+{"kind":"textbox","id":"sh/1032lszq","slide":4,"text":"TBD and all-day are separated","textPreview":"TBD and all-day are separated","textChars":29,"textLines":1,"bbox":[152,456,400,48]}
+{"kind":"shape","id":"sh/u18jqh0f","slide":4,"bbox":[688,208,500,340]}
+{"kind":"textbox","id":"sh/jm1cfa9w","slide":4,"text":"Weekly Calendar","textPreview":"Weekly Calendar","textChars":15,"textLines":1,"bbox":[718,238,430,40]}
+{"kind":"shape","id":"sh/c7u54zid","slide":4,"bbox":[724,320,10,10]}
+{"kind":"textbox","id":"sh/1orytsvu","slide":4,"text":"Formula-driven timed event list","textPreview":"Formula-driven timed event list","textChars":31,"textLines":1,"bbox":[748,312,400,48]}
+{"kind":"shape","id":"sh/upwb2hwf","slide":4,"bbox":[724,368,10,10]}
+{"kind":"textbox","id":"sh/nap4r65w","slide":4,"text":"Use filters to narrow the week","textPreview":"Use filters to narrow the week","textChars":30,"textLines":1,"bbox":[748,360,400,48]}
+{"kind":"shape","id":"sh/f6dcbulw","slide":4,"bbox":[724,416,10,10]}
+{"kind":"textbox","id":"sh/mlkjm1cf","slide":4,"text":"Cleaner printout for weekly planning","textPreview":"Cleaner printout for weekly planning","textChars":36,"textLines":1,"bbox":[748,408,400,48]}
+{"kind":"shape","id":"sh/xc3ylc7u","slide":4,"bbox":[724,464,10,10]}
+{"kind":"textbox","id":"sh/4r65wjud","slide":4,"text":"Replaces the older grid-style weekly tab","textPreview":"Replaces the older grid-style weekly tab","textChars":40,"textLines":1,"bbox":[748,456,400,48]}
+{"kind":"notes","id":"nt/9hjtcb","slide":4,"text":""}
+{"kind":"slide","id":"sl/tbr03z","slide":5,"title":"EVENT SCHEDULE TEMPLATE","textShapes":13}
+{"kind":"textbox","id":"sh/hoza1gvy","slide":5,"text":"EVENT SCHEDULE TEMPLATE","textPreview":"EVENT SCHEDULE TEMPLATE","textChars":23,"textLines":1,"bbox":[72,30,420,26]}
+{"kind":"textbox","id":"sh/a1gvy90j","slide":5,"text":"Run of Show is the minute-by-minute tool","textPreview":"Run of Show is the minute-by-minute tool","textChars":40,"textLines":1,"bbox":[72,70,900,76]}
+{"kind":"shape","id":"sh/zidonyd0","slide":5,"bbox":[72,150,160,4]}
+{"kind":"textbox","id":"sh/svu9knih","slide":5,"text":"Use it when an event needs operational detail beyond the calendar entry.","textPreview":"Use it when an event needs operational detail beyond the calendar entry.","textChars":72,"textLines":1,"bbox":[78,184,900,38]}
+{"kind":"shape","id":"sh/hgn29gr2","slide":5,"bbox":[96,280,330,126]}
+{"kind":"shape","id":"sh/ap4r65wj","slide":5,"bbox":[118,302,42,42]}
+{"kind":"textbox","id":"sh/za1gvy90","slide":5,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[118,307,42,28]}
+{"kind":"textbox","id":"sh/sji5snel","slide":5,"text":"Pick location","textPreview":"Pick location","textChars":13,"textLines":1,"bbox":[176,302,226,32]}
+{"kind":"textbox","id":"sh/h4byhgn2","slide":5,"text":"Start with the room or event space.","textPreview":"Start with the room or event space.","textChars":35,"textLines":1,"bbox":[176,338,226,54]}
+{"kind":"shape","id":"sh/p4r65wju","slide":5,"bbox":[476,280,330,126]}
+{"kind":"shape","id":"sh/wjudg7ad","slide":5,"bbox":[498,302,42,42]}
+{"kind":"textbox","id":"sh/7y1kre1w","slide":5,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[498,307,42,28]}
+{"kind":"textbox","id":"sh/ed8v6psf","slide":5,"text":"Pick event","textPreview":"Pick event","textChars":10,"textLines":1,"bbox":[556,302,226,32]}
+{"kind":"textbox","id":"sh/pwb2hwfy","slide":5,"text":"The dropdown narrows to timed events at that location.","textPreview":"The dropdown narrows to timed events at that location.","textChars":54,"textLines":1,"bbox":[556,338,226,54]}
+{"kind":"shape","id":"sh/0bi9s36h","slide":5,"bbox":[856,280,330,126]}
+{"kind":"shape","id":"sh/7qpg3ex0","slide":5,"bbox":[878,302,42,42]}
+{"kind":"textbox","id":"sh/i5sneloj","slide":5,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[878,307,42,28]}
+{"kind":"textbox","id":"sh/pkzupwb2","slide":5,"text":"Fill the rundown","textPreview":"Fill the rundown","textChars":16,"textLines":1,"bbox":[936,302,226,32]}
+{"kind":"textbox","id":"sh/0z61032l","slide":5,"text":"Add speaker, cue, tech, transition, and notes by minute.","textPreview":"Add speaker, cue, tech, transition, and notes by minute.","textChars":56,"textLines":1,"bbox":[936,338,226,54]}
+{"kind":"shape","id":"sh/w7mp0bi9","slide":5,"bbox":[118,500,1020,76]}
+{"kind":"textbox","id":"sh/psfil0rq","slide":5,"text":"Best use: stage cues, speaker timing, AV notes, handoffs, and day-of execution notes.","textPreview":"Best use: stage cues, speaker timing, AV notes, handoffs, and day-of execution notes.","textChars":85,"textLines":1,"bbox":[148,522,960,36]}
+{"kind":"notes","id":"nt/tbr03z","slide":5,"text":""}
+{"kind":"slide","id":"sl/37m6qe","slide":6,"title":"EVENT SCHEDULE TEMPLATE","textShapes":12}
+{"kind":"textbox","id":"sh/r65wjudg","slide":6,"text":"EVENT SCHEDULE TEMPLATE","textPreview":"EVENT SCHEDULE TEMPLATE","textChars":23,"textLines":1,"bbox":[72,30,420,26]}
+{"kind":"textbox","id":"sh/gr2p8nqx","slide":6,"text":"Printable summary tabs","textPreview":"Printable summary tabs","textChars":22,"textLines":1,"bbox":[72,70,900,76]}
+{"kind":"shape","id":"sh/9cvixcze","slide":6,"bbox":[72,150,160,4]}
+{"kind":"shape","id":"sh/yxobm58z","slide":6,"bbox":[116,206,1020,68]}
+{"kind":"textbox","id":"sh/nih4byhg","slide":6,"text":"Location Schedule","textPreview":"Location Schedule","textChars":17,"textLines":1,"bbox":[146,222,330,30]}
+{"kind":"textbox","id":"sh/g3ex0nux","slide":6,"text":"See when each space is busy.","textPreview":"See when each space is busy.","textChars":28,"textLines":1,"bbox":[500,223,560,30]}
+{"kind":"shape","id":"sh/5o7qpg3e","slide":6,"bbox":[116,288,1020,68]}
+{"kind":"textbox","id":"sh/y1kre1w7","slide":6,"text":"Sponsors","textPreview":"Sponsors","textChars":8,"textLines":1,"bbox":[146,304,330,30]}
+{"kind":"textbox","id":"sh/rmhk3q5o","slide":6,"text":"Events with sponsor entries only.","textPreview":"Events with sponsor entries only.","textChars":33,"textLines":1,"bbox":[500,305,560,30]}
+{"kind":"shape","id":"sh/fa9w3m94","slide":6,"bbox":[116,370,1020,68]}
+{"kind":"textbox","id":"sh/qpg3ex0n","slide":6,"text":"Speakers","textPreview":"Speakers","textChars":8,"textLines":1,"bbox":[146,386,330,30]}
+{"kind":"textbox","id":"sh/xczed8v6","slide":6,"text":"Events with speaker entries only.","textPreview":"Events with speaker entries only.","textChars":33,"textLines":1,"bbox":[500,387,560,30]}
+{"kind":"shape","id":"sh/8v6psfil","slide":6,"bbox":[116,452,1020,68]}
+{"kind":"textbox","id":"sh/fyxobm58","slide":6,"text":"Required Attendees","textPreview":"Required Attendees","textChars":18,"textLines":1,"bbox":[146,468,330,30]}
+{"kind":"textbox","id":"sh/qd4vmtwr","slide":6,"text":"Who needs to be where.","textPreview":"Who needs to be where.","textChars":22,"textLines":1,"bbox":[500,469,560,30]}
+{"kind":"shape","id":"sh/x4nap4r6","slide":6,"bbox":[116,534,1020,68]}
+{"kind":"textbox","id":"sh/8jqh0fep","slide":6,"text":"Instructions","textPreview":"Instructions","textChars":12,"textLines":1,"bbox":[146,550,330,30]}
+{"kind":"textbox","id":"sh/fmlkjm1c","slide":6,"text":"Plain-language workbook guide.","textPreview":"Plain-language workbook guide.","textChars":30,"textLines":1,"bbox":[500,551,560,30]}
+{"kind":"notes","id":"nt/37m6qe","slide":6,"text":""}
+{"kind":"slide","id":"sl/ui2ipk","slide":7,"title":"EVENT SCHEDULE TEMPLATE","textShapes":8}
+{"kind":"textbox","id":"sh/oza1gvy9","slide":7,"text":"EVENT SCHEDULE TEMPLATE","textPreview":"EVENT SCHEDULE TEMPLATE","textChars":23,"textLines":1,"bbox":[72,30,420,26]}
+{"kind":"textbox","id":"sh/zed8v6ps","slide":7,"text":"Before distributing a new version","textPreview":"Before distributing a new version","textChars":33,"textLines":1,"bbox":[72,70,900,76]}
+{"kind":"shape","id":"sh/6xkf6dcb","slide":7,"bbox":[72,150,160,4]}
+{"kind":"shape","id":"sh/hwfyxobm","slide":7,"bbox":[112,212,10,10]}
+{"kind":"textbox","id":"sh/obm58z25","slide":7,"text":"Save a new version; never overwrite the prior working file.","textPreview":"Save a new version; never overwrite the prior working file.","textChars":59,"textLines":1,"bbox":[136,204,980,48]}
+{"kind":"shape","id":"sh/zqtcj6to","slide":7,"bbox":[112,268,10,10]}
+{"kind":"textbox","id":"sh/65wjudg7","slide":7,"text":"Add a test category on Reference and use it in Data Input.","textPreview":"Add a test category on Reference and use it in Data Input.","textChars":58,"textLines":1,"bbox":[136,260,980,48]}
+{"kind":"shape","id":"sh/h0fepkzu","slide":7,"bbox":[112,324,10,10]}
+{"kind":"textbox","id":"sh/sfil0rqd","slide":7,"text":"Add overlapping timed events and confirm slots 1, 2, and 3.","textPreview":"Add overlapping timed events and confirm slots 1, 2, and 3.","textChars":59,"textLines":1,"bbox":[136,316,980,48]}
+{"kind":"shape","id":"sh/qtcj6tov","slide":7,"bbox":[112,380,10,10]}
+{"kind":"textbox","id":"sh/je9cvixc","slide":7,"text":"Add a TBD event and confirm it appears once in the TBD row.","textPreview":"Add a TBD event and confirm it appears once in the TBD row.","textChars":59,"textLines":1,"bbox":[136,372,980,48]}
+{"kind":"shape","id":"sh/8z25kb6x","slide":7,"bbox":[112,436,10,10]}
+{"kind":"textbox","id":"sh/1gvy90je","slide":7,"text":"Add an all-day event and confirm it appears once in All-Day Events.","textPreview":"Add an all-day event and confirm it appears once in All-Day Events.","textChars":67,"textLines":1,"bbox":[136,428,980,48]}
+{"kind":"shape","id":"sh/q1orytsv","slide":7,"bbox":[112,492,10,10]}
+{"kind":"textbox","id":"sh/fmlkjm1c","slide":7,"text":"Reopen the file and check Daily Schedule, Weekly Calendar, Run of Show, and summary tabs.","textPreview":"Reopen the file and check Daily Schedule, Weekly Calendar, Run of Show, and summary tabs.","textChars":89,"textLines":1,"bbox":[136,484,980,48]}
+{"kind":"notes","id":"nt/ui2ipk","slide":7,"text":""}
+{"kind":"slide","id":"sl/u7voef","slide":8,"title":"Operating rule","textShapes":4}
+{"kind":"textbox","id":"sh/qtcj6tov","slide":8,"text":"Operating rule","textPreview":"Operating rule","textChars":14,"textLines":1,"bbox":[96,92,700,58]}
+{"kind":"textbox","id":"sh/1gvy90je","slide":8,"text":"Data Input is the source of truth. Everything else is a view.","textPreview":"Data Input is the source of truth. Everything else is a view.","textChars":61,"textLines":1,"bbox":[100,198,920,74]}
+{"kind":"shape","id":"sh/8z25kb6x","slide":8,"bbox":[104,354,960,120]}
+{"kind":"textbox","id":"sh/fmlkjm1c","slide":8,"text":"When something looks wrong, check the row first: date, start time, end time, event name, location, category, class, and status.","textPreview":"When something looks wrong, check the row first: date, start time, end time, event name, location, category, class, and status.","textChars":127,"textLines":1,"bbox":[138,386,900,58]}
+{"kind":"textbox","id":"sh/q1orytsv","slide":8,"text":"Final clean tested template","textPreview":"Final clean tested template","textChars":27,"textLines":1,"bbox":[100,608,420,30]}
+{"kind":"notes","id":"nt/u7voef","slide":8,"text":""}
