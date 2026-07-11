@@ -1,6 +1,3 @@
-// Adaptive full rebuild version for ServiceOrderItems.
-// Pulls OrderNumber 1 through 50,000 and automatically splits large ranges to avoid API-capped results.
-// Final output overwrites ServiceOrderItems_Pull.csv only after a temp CSV is successfully written.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -11,6 +8,7 @@ using System.Text;
 using CsvHelper;
 using CsvHelper.Configuration;
 using Ungerboeck.Api.Models.Authorization;
+using Ungerboeck.Api.Models.Search;
 using Ungerboeck.Api.Models.Subjects;
 using Ungerboeck.Api.Sdk;
 
@@ -19,22 +17,23 @@ class Program
     private const string OrgCode = "10";
     private const string UngerboeckUri = "https://kallman.ungerboeck.com/prod";
 
-    private const string DefaultApiUserId = "";
-    private const string DefaultSecret = "";
-    private const string DefaultKey = "";
+    private static readonly string ApiUserId =
+        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "KYLEPAPI";
+    private static readonly string Secret =
+        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "8c247eb8-2342-452a-95c3-cf22bd1c6a56";
+    private static readonly string Key =
+        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "e2b97782-08d7-40f3-bdbc-fbef5095154c";
 
     private const string OutputFolder =
         @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
 
     private static readonly string OutputFilePath = Path.Combine(OutputFolder, "ServiceOrderItems_Pull.csv");
-    private static readonly string TempOutputFilePath = Path.Combine(OutputFolder, "ServiceOrderItems_Pull.tmp.csv");
+    private static readonly string RunStatePath = Path.Combine(OutputFolder, "ServiceOrderItems_Pull.last_run.txt");
 
-    private const int InitialOrderBatchSize = 250;
-    private const int MinimumOrderBatchSize = 1;
-    private const int SuspectedApiCapRowCount = 250;
-    private const int DefaultStartOrderNumber = 1;
-    private const int DefaultEndOrderNumber = 75000;
-    private const int ThrottleEveryQueries = 10;
+    private static readonly DateTime BaseStartDate = DateTime.Today.AddYears(-6);
+    private static readonly TimeSpan OverlapWindow = TimeSpan.FromMinutes(10);
+
+    private const int ThrottleEvery = 100;
     private const int ThrottleMs = 500;
 
     private static readonly List<string> DesiredColumns = new List<string>
@@ -272,8 +271,7 @@ class Program
         "ServiceOrderItemUserFieldSets[0].UserText50"
     };
 
-
-    static int Main()
+    static void Main()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
@@ -284,55 +282,67 @@ class Program
             Console.WriteLine("-> Building Momentus client...");
             var client = BuildClient();
 
-            int startOrderNumber = GetOptionalIntEnvironmentVariable("MOMENTUS_START_ORDER_NUMBER", DefaultStartOrderNumber);
-            int endOrderNumber = GetOptionalIntEnvironmentVariable("MOMENTUS_END_ORDER_NUMBER", DefaultEndOrderNumber);
+            DateTime now = DateTime.Now;
+            DateTime effectiveSince = GetEffectiveSince();
 
-            if (endOrderNumber < startOrderNumber)
-                throw new InvalidOperationException($"End order number {endOrderNumber} is lower than start order number {startOrderNumber}.");
+            Console.WriteLine($"-> Existing file: {OutputFilePath}");
+            Console.WriteLine($"-> Last run checkpoint: {effectiveSince:yyyy-MM-dd HH:mm:ss}");
 
-            Console.WriteLine($"-> Full rebuild order range: {startOrderNumber:N0} - {endOrderNumber:N0}");
-            Console.WriteLine($"-> Pulling service order items by OrderNumber, starting with {InitialOrderBatchSize:N0} order increments...");
-            Console.WriteLine($"-> If a range returns {SuspectedApiCapRowCount:N0}+ rows, it will be split smaller to avoid capped results.");
-            Console.WriteLine($"-> Output file: {OutputFilePath}");
+            var existingRows = LoadExistingRows(OutputFilePath);
+            Console.WriteLine($"-> Existing CSV rows loaded: {existingRows.Count:N0}");
 
-            var rowsByKey = PullAllServiceOrderItemsByOrderNumber(client, startOrderNumber, endOrderNumber);
+            var changedRows = PullChangedServiceOrderItems(client, effectiveSince);
+            Console.WriteLine($"-> Changed/new service order items returned: {changedRows.Count:N0}");
 
-            var finalRows = rowsByKey.Values
+            int inserted = 0;
+            int updated = 0;
+
+            foreach (var row in changedRows)
+            {
+                string key = GetRowKey(row);
+                if (string.IsNullOrWhiteSpace(key))
+                    continue;
+
+                if (existingRows.ContainsKey(key))
+                {
+                    existingRows[key] = row;
+                    updated++;
+                }
+                else
+                {
+                    existingRows[key] = row;
+                    inserted++;
+                }
+            }
+
+            var finalRows = existingRows.Values
                 .OrderBy(r => ToInt(GetValue(r, "OrderNumber")))
                 .ThenBy(r => ToInt(GetValue(r, "OrderLineNumber")))
                 .ToList();
 
-            WriteCsv(TempOutputFilePath, finalRows, DesiredColumns);
+            WriteCsv(OutputFilePath, finalRows, DesiredColumns);
+            WriteRunState(RunStatePath, now);
 
-            File.Move(TempOutputFilePath, OutputFilePath, overwrite: true);
-
+            Console.WriteLine($"-> Inserted rows: {inserted:N0}");
+            Console.WriteLine($"-> Updated rows: {updated:N0}");
             Console.WriteLine($"-> Final CSV rows: {finalRows.Count:N0}");
             Console.WriteLine($"-> CSV saved: {OutputFilePath}");
-            return 0;
+            Console.WriteLine($"-> Run state saved: {RunStatePath}");
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine("FATAL:");
-            Console.Error.WriteLine(ex.ToString());
-            return 1;
+            Console.WriteLine("FATAL:");
+            Console.WriteLine(ex.ToString());
         }
     }
 
     private static ApiClient BuildClient()
     {
-        string apiUserId = GetEnvironmentVariableOrDefault("MOMENTUS_APIUSER", DefaultApiUserId);
-        string secret = GetEnvironmentVariableOrDefault("MOMENTUS_SECRET", DefaultSecret);
-        string key = GetEnvironmentVariableOrDefault("MOMENTUS_KEY", DefaultKey);
-
-        if (string.IsNullOrWhiteSpace(apiUserId) || string.IsNullOrWhiteSpace(secret) || string.IsNullOrWhiteSpace(key))
-            throw new InvalidOperationException(
-                "MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_KEY must be set in the environment.");
-
         var auth = new Jwt
         {
-            APIUserID = apiUserId,
-            Secret = secret,
-            Key = key,
+            APIUserID = ApiUserId,
+            Secret = Secret,
+            Key = Key,
             UngerboeckURI = UngerboeckUri,
             AutoRefresh = new AutoRefresh()
         };
@@ -340,185 +350,118 @@ class Program
         return new ApiClient(auth);
     }
 
-    private static int GetNewestServiceOrderNumber(ApiClient client)
+    private static DateTime GetEffectiveSince()
     {
-        // Find the current high-water order number by looking at recent service orders.
-        // This avoids relying on SDK support for $orderby / $top, which failed in your run.
-        object? serviceOrdersEndpoint = GetEndpoint(client, "ServiceOrders");
-        if (serviceOrdersEndpoint == null)
-            throw new InvalidOperationException("Could not find client.Endpoints.ServiceOrders in this SDK version.");
+        DateTime since = BaseStartDate;
 
-        DateTime weekStart = DateTime.Today.AddDays(-7);
-        string weekStartText = weekStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-
-        var orderNumbers = new List<int>();
-
-        string[] lastWeekQueries = new[]
+        if (File.Exists(RunStatePath))
         {
-            $"EnteredOn ge datetime'{weekStartText}'",
-            $"ChangedOn ge datetime'{weekStartText}'",
-            $"OrderDate ge datetime'{weekStartText}'",
-            $"OrderedOn ge datetime'{weekStartText}'"
+            string raw = File.ReadAllText(RunStatePath).Trim();
+            if (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out DateTime parsed))
+                since = parsed;
+        }
+        else if (File.Exists(OutputFilePath))
+        {
+            since = File.GetLastWriteTime(OutputFilePath);
+        }
+
+        since = since - OverlapWindow;
+        if (since < BaseStartDate)
+            since = BaseStartDate;
+
+        return since;
+    }
+
+    private static Dictionary<string, Dictionary<string, string>> LoadExistingRows(string path)
+    {
+        var rows = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+
+        if (!File.Exists(path))
+            return rows;
+
+        var config = new CsvConfiguration(CultureInfo.InvariantCulture)
+        {
+            HasHeaderRecord = true,
+            MissingFieldFound = null,
+            HeaderValidated = null,
+            BadDataFound = null
         };
 
-        foreach (string query in lastWeekQueries)
-        {
-            try
-            {
-                Console.WriteLine($"-> Searching ServiceOrders high number using: {query}");
+        using var reader = new StreamReader(path, Encoding.UTF8);
+        using var csv = new CsvReader(reader, config);
 
-                var results = SearchEndpoint(serviceOrdersEndpoint, OrgCode, query).ToList();
-                int found = 0;
+        if (!csv.Read() || !csv.ReadHeader())
+            return rows;
 
-                foreach (object order in results)
-                {
-                    int orderNumber = GetOrderNumberFromObject(order);
-                    if (orderNumber > 0)
-                    {
-                        orderNumbers.Add(orderNumber);
-                        found++;
-                    }
-                }
+        string[] headers = csv.HeaderRecord ?? Array.Empty<string>();
 
-                Console.WriteLine($"-> ServiceOrders returned {found:N0} usable order numbers for this query.");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"-> ServiceOrders query failed and will be skipped: {query}");
-                Console.WriteLine($"   {ex.GetType().Name}: {ex.Message}");
-            }
-        }
-
-        int newestFromLastWeek = orderNumbers.DefaultIfEmpty(0).Max();
-        if (newestFromLastWeek > 0)
-        {
-            Console.WriteLine($"-> Newest/highest service order number found from last-week search: {newestFromLastWeek:N0}");
-            return newestFromLastWeek;
-        }
-
-        // Fallback: use MOMENTUS_MAX_ORDER_NUMBER if no recent service orders were returned.
-        int manualMax = GetOptionalIntEnvironmentVariable("MOMENTUS_MAX_ORDER_NUMBER", 0);
-        if (manualMax > 0)
-            return manualMax;
-
-        throw new InvalidOperationException(
-            "Could not determine newest service order number from last week's ServiceOrders API results. " +
-            "Set MOMENTUS_MAX_ORDER_NUMBER as a fallback, or confirm the correct ServiceOrders date field name.");
-    }
-
-    private static Dictionary<string, Dictionary<string, string>> PullAllServiceOrderItemsByOrderNumber(ApiClient client, int startOrderNumber, int endOrderNumber)
-    {
-        var rowsByKey = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-        int queryCount = 0;
-
-        for (int batchStart = startOrderNumber; batchStart <= endOrderNumber; batchStart += InitialOrderBatchSize)
-        {
-            int batchEnd = Math.Min(batchStart + InitialOrderBatchSize - 1, endOrderNumber);
-            PullServiceOrderItemsAdaptive(client, batchStart, batchEnd, rowsByKey, ref queryCount);
-        }
-
-        return rowsByKey;
-    }
-
-    private static void PullServiceOrderItemsAdaptive(
-        ApiClient client,
-        int batchStart,
-        int batchEnd,
-        Dictionary<string, Dictionary<string, string>> rowsByKey,
-        ref int queryCount)
-    {
-        string odata = batchStart == batchEnd
-            ? $"OrderNumber eq {batchStart}"
-            : $"OrderNumber ge {batchStart} and OrderNumber le {batchEnd}";
-
-        queryCount++;
-        Console.WriteLine($"-> Query {queryCount:N0}: orders {batchStart:N0} - {batchEnd:N0}");
-
-        var response = client.Endpoints.ServiceOrderItems.Search(OrgCode, odata);
-        var results = response.Results?.ToList() ?? new List<ServiceOrderItemsModel>();
-
-        Console.WriteLine($"   Returned: {results.Count:N0}");
-
-        int rangeSize = batchEnd - batchStart + 1;
-
-        if (results.Count >= SuspectedApiCapRowCount && rangeSize > MinimumOrderBatchSize)
-        {
-            int midpoint = batchStart + ((batchEnd - batchStart) / 2);
-
-            Console.WriteLine($"   Possible API cap. Splitting range into {batchStart:N0}-{midpoint:N0} and {midpoint + 1:N0}-{batchEnd:N0}.");
-
-            PullServiceOrderItemsAdaptive(client, batchStart, midpoint, rowsByKey, ref queryCount);
-            PullServiceOrderItemsAdaptive(client, midpoint + 1, batchEnd, rowsByKey, ref queryCount);
-            return;
-        }
-
-        if (results.Count >= SuspectedApiCapRowCount && rangeSize == MinimumOrderBatchSize)
-        {
-            Console.WriteLine($"   WARNING: Single order {batchStart:N0} returned {results.Count:N0} rows. The API may still be capping this one order.");
-        }
-
-        foreach (var item in results)
+        while (csv.Read())
         {
             var row = CreateBlankRow();
-            row["PullRunOn"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-            PopulateRowFromServiceOrderItem(item, row);
+
+            foreach (string header in headers)
+            {
+                if (!row.ContainsKey(header))
+                    row[header] = string.Empty;
+
+                row[header] = csv.GetField(header) ?? string.Empty;
+            }
 
             string key = GetRowKey(row);
-            if (string.IsNullOrWhiteSpace(key))
-                continue;
-
-            rowsByKey[key] = row;
+            if (!string.IsNullOrWhiteSpace(key))
+                rows[key] = row;
         }
 
-        Console.WriteLine($"   Total unique rows: {rowsByKey.Count:N0}");
-
-        if (queryCount % ThrottleEveryQueries == 0)
-            System.Threading.Thread.Sleep(ThrottleMs);
+        return rows;
     }
 
-    private static object? GetEndpoint(ApiClient client, string endpointName)
+    private static List<Dictionary<string, string>> PullChangedServiceOrderItems(ApiClient client, DateTime since)
     {
-        return client.Endpoints
-            .GetType()
-            .GetProperty(endpointName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase)
-            ?.GetValue(client.Endpoints);
-    }
+        var rows = new List<Dictionary<string, string>>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-    private static IEnumerable<object> SearchEndpoint(object endpoint, string orgCode, string searchText)
-    {
-        MethodInfo? searchMethod = endpoint.GetType()
-            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .Where(m => string.Equals(m.Name, "Search", StringComparison.OrdinalIgnoreCase))
-            .FirstOrDefault(m =>
+        DateTime cursor = since.Date;
+        DateTime endDate = DateTime.Today.AddDays(1);
+        int processed = 0;
+
+        while (cursor < endDate)
+        {
+            DateTime next = cursor.AddDays(1);
+            string startText = cursor.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            string endText = next.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            string odata = $"ChangedOn ge datetime'{startText}' and ChangedOn lt datetime'{endText}'";
+
+            Console.WriteLine($"-> OData: {odata}");
+
+            var response = client.Endpoints.ServiceOrderItems.Search(OrgCode, odata);
+            var results = response.Results?.ToList() ?? new List<ServiceOrderItemsModel>();
+
+            foreach (var item in results)
             {
-                var p = m.GetParameters();
-                return p.Length >= 2 &&
-                       p[0].ParameterType == typeof(string) &&
-                       p[1].ParameterType == typeof(string);
-            });
+                processed++;
 
-        if (searchMethod == null)
-            throw new InvalidOperationException($"Search(string, string) was not found on endpoint {endpoint.GetType().Name}.");
+                DateTime changedOn = ToDateTime(item.ChangedOn);
+                if (changedOn != DateTime.MinValue && changedOn <= since)
+                    continue;
 
-        object? response = searchMethod.Invoke(endpoint, new object[] { orgCode, searchText });
-        if (response == null)
-            return Enumerable.Empty<object>();
+                var row = CreateBlankRow();
+                row["PullRunOn"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                PopulateRowFromServiceOrderItem(item, row);
 
-        object? results = response.GetType()
-            .GetProperty("Results", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase)
-            ?.GetValue(response);
+                string key = GetRowKey(row);
+                if (string.IsNullOrWhiteSpace(key) || !seen.Add(key))
+                    continue;
 
-        if (results is System.Collections.IEnumerable enumerable)
-            return enumerable.Cast<object>();
+                rows.Add(row);
 
-        return Enumerable.Empty<object>();
-    }
+                if (processed % ThrottleEvery == 0)
+                    System.Threading.Thread.Sleep(ThrottleMs);
+            }
 
-    private static int GetOrderNumberFromObject(object source)
-    {
-        object? value = GetPropertyPathValue(source, "OrderNumber");
-        string text = ToStringSafe(value);
-        return ToInt(text);
+            cursor = next;
+        }
+
+        return rows;
     }
 
     private static void PopulateRowFromServiceOrderItem(ServiceOrderItemsModel item, Dictionary<string, string> row)
@@ -604,7 +547,26 @@ class Program
 
     private static int ToInt(string value)
     {
-        return int.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out int number) ? number : 0;
+        return int.TryParse(value, out int number) ? number : 0;
+    }
+
+    private static DateTime ToDateTime(object? value)
+    {
+        if (value == null)
+            return DateTime.MinValue;
+
+        if (value is DateTime dt)
+            return dt;
+
+        if (value is DateTimeOffset dto)
+            return dto.LocalDateTime;
+
+        return DateTime.TryParse(value.ToString(), out DateTime parsed) ? parsed : DateTime.MinValue;
+    }
+
+    private static void WriteRunState(string path, DateTime value)
+    {
+        File.WriteAllText(path, value.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
     }
 
     private static string ToStringSafe(object? value)
@@ -645,22 +607,5 @@ class Program
             }
             csv.NextRecord();
         }
-    }
-
-    private static string GetEnvironmentVariableOrDefault(string name, string defaultValue)
-    {
-        string? value = Environment.GetEnvironmentVariable(name);
-        return string.IsNullOrWhiteSpace(value) ? defaultValue : value;
-    }
-
-    private static int GetOptionalIntEnvironmentVariable(string name, int defaultValue)
-    {
-        string? value = Environment.GetEnvironmentVariable(name);
-        if (string.IsNullOrWhiteSpace(value))
-            return defaultValue;
-
-        return int.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out int parsed)
-            ? parsed
-            : defaultValue;
     }
 }
