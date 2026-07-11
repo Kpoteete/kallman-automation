@@ -361,10 +361,10 @@ class Program
 
         Console.WriteLine($"Temp run folder: {tempRunFolder}");
 
-        string eventsPath = CopyFileForReading(sourceEventsPath, tempRunFolder);
-        string exhibitorsPath = CopyFileForReading(sourceExhibitorsPath, tempRunFolder);
-        string accountsPath = CopyFileForReading(sourceAccountsPath, tempRunFolder);
-        string exhibitorCategoriesPath = CopyFileForReading(sourceExhibitorCategoriesPath, tempRunFolder);
+        string eventsPath = SourceFileReader.CopyStableFile(sourceEventsPath, tempRunFolder);
+        string exhibitorsPath = SourceFileReader.CopyStableFile(sourceExhibitorsPath, tempRunFolder);
+        string accountsPath = SourceFileReader.CopyStableFile(sourceAccountsPath, tempRunFolder);
+        string exhibitorCategoriesPath = SourceFileReader.CopyStableFile(sourceExhibitorCategoriesPath, tempRunFolder);
 
         DateTime today = runStartedAt.Date;
         DateTime maxDate = today.AddMonths(MonthsAhead);
@@ -449,9 +449,12 @@ class Program
                 string savedStatusCriteria = ReadSavedStatusCriteria(outputPath);
                 List<Dictionary<string, string>> existingPullRows = ReadExistingPullRowsFromWorkbook(outputPath);
                 List<Dictionary<string, string>> filteredCurrentFullRows = FilterRowsByStatusCriteria(currentFullRows, savedStatusCriteria);
-                List<Dictionary<string, string>> filteredExistingPullRows = FilterRowsByStatusCriteria(existingPullRows, savedStatusCriteria);
-                List<Dictionary<string, string>> currentPullRows = BuildPullRows(filteredCurrentFullRows, runStartedAt);
-                List<Dictionary<string, string>> allPullRows = filteredExistingPullRows
+                // Keep the data sheet as the unfiltered canonical history. Status
+                // criteria belong to the user-facing view and must never erase
+                // rows collected under an earlier selection.
+                List<Dictionary<string, string>> currentPullRows = BuildPullRows(currentFullRows, runStartedAt);
+                List<Dictionary<string, string>> currentViewRows = BuildPullRows(filteredCurrentFullRows, runStartedAt);
+                List<Dictionary<string, string>> allPullRows = existingPullRows
                     .Concat(currentPullRows)
                     .ToList();
 
@@ -464,7 +467,7 @@ class Program
 
                 Stopwatch workbookStopwatch = Stopwatch.StartNew();
 
-                CreateRegistrationListWorkbook(outputPath, currentPullRows, allPullRows, runStartedAt, savedStatusCriteria);
+                CreateRegistrationListWorkbook(outputPath, currentViewRows, allPullRows, runStartedAt, savedStatusCriteria);
 
                 workbookStopwatch.Stop();
                 Console.WriteLine($"Workbook render/save time: {workbookStopwatch.Elapsed:mm\\:ss}");
@@ -4093,71 +4096,6 @@ class Program
             throw new FileNotFoundException($"Required file not found: {path}");
     }
 
-    private static string CopyFileForReading(string sourcePath, string tempRunFolder)
-    {
-        string destinationPath = Path.Combine(tempRunFolder, Path.GetFileName(sourcePath));
-
-        const int maxAttempts = 10;
-        const int delayMilliseconds = 3000;
-
-        for (int attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            try
-            {
-                FileInfo before = new(sourcePath);
-                long sourceLengthBefore = before.Length;
-                DateTime sourceLastWriteBefore = before.LastWriteTimeUtc;
-
-                using (FileStream sourceStream = new(
-                    sourcePath,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.ReadWrite | FileShare.Delete))
-                using (FileStream destinationStream = new(
-                    destinationPath,
-                    FileMode.Create,
-                    FileAccess.Write,
-                    FileShare.None))
-                {
-                    sourceStream.CopyTo(destinationStream);
-                }
-
-                FileInfo after = new(sourcePath);
-                FileInfo copied = new(destinationPath);
-
-                bool stable = sourceLengthBefore == after.Length
-                    && sourceLastWriteBefore == after.LastWriteTimeUtc
-                    && copied.Length == sourceLengthBefore;
-
-                if (!stable)
-                {
-                    throw new IOException($"Source file changed while being copied: {sourcePath}");
-                }
-
-                Console.WriteLine($"Copied stable source file for reading: {Path.GetFileName(sourcePath)}");
-
-                return destinationPath;
-            }
-            catch (IOException ex)
-            {
-                Console.WriteLine($"File busy or changing: {Path.GetFileName(sourcePath)}. Attempt {attempt} of {maxAttempts}.");
-
-                if (attempt == maxAttempts)
-                {
-                    throw new IOException(
-                        $"Could not copy a stable file after {maxAttempts} attempts. File may be locked or actively changing: {sourcePath}",
-                        ex
-                    );
-                }
-
-                Thread.Sleep(delayMilliseconds);
-            }
-        }
-
-        throw new IOException($"Could not copy file: {sourcePath}");
-    }
-
-
     private static string MakeSafeFileName(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -4190,27 +4128,4 @@ class Program
 
         return columnName;
     }
-}
-
-// ============================================================
-// MODELS
-// ============================================================
-
-class EventInfo
-{
-    public string EventId { get; set; } = "";
-    public string EventName { get; set; } = "";
-    public DateTime StartDate { get; set; }
-}
-
-class ComparisonResult
-{
-    public List<Dictionary<string, string>> NewRows { get; set; } = new();
-    public List<Dictionary<string, string>> ChangedRows { get; set; } = new();
-}
-
-class PullRunInfo
-{
-    public DateTime PullDateTime { get; set; }
-    public int RowCount { get; set; }
 }

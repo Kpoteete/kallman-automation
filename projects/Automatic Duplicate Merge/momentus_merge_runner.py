@@ -418,6 +418,52 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+
+def recover_to_accounts_grid(page) -> None:
+    """Close any leftover modal/dialog so the next merge can continue."""
+    # Escape often closes autocomplete lists, context menus, and dialogs.
+    for _ in range(3):
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(250)
+        except Exception:
+            break
+
+    # Prefer explicit Cancel/Close buttons inside visible dialogs.
+    for label in ("Cancel", "Close", "OK"):
+        buttons = page.get_by_role("button", name=label, exact=True)
+        for i in range(buttons.count() - 1, -1, -1):
+            button = buttons.nth(i)
+            try:
+                if button.is_visible(timeout=300):
+                    button.click(timeout=2_000)
+                    page.wait_for_timeout(350)
+            except Exception:
+                continue
+
+    # Some Momentus modals use an unlabeled X button.
+    close_buttons = page.locator(
+        'ux-modal-container button[aria-label*="Close" i], '
+        'ux-dialog-container button[aria-label*="Close" i], '
+        'ux-modal-container .close-button, ux-dialog-container ux-dialog-header > button'
+    )
+    for i in range(close_buttons.count() - 1, -1, -1):
+        button = close_buttons.nth(i)
+        try:
+            if button.is_visible(timeout=300):
+                button.click(timeout=2_000)
+                page.wait_for_timeout(350)
+        except Exception:
+            continue
+
+    # Wait briefly for modal overlays to stop intercepting pointer events.
+    try:
+        page.locator("ux-modal-container:visible, ux-dialog-container:visible").wait_for(
+            state="hidden", timeout=3_000
+        )
+    except Exception:
+        pass
+
 def main() -> int:
     args = parse_args()
     pairs = load_pairs(args.input, args.code_width)
@@ -497,8 +543,13 @@ def main() -> int:
                 continue
             excel_status.write(pair, "processing", "Automation is working on this merge")
             try:
+                recover_to_accounts_grid(page)
                 clear_filters = visible_locator(page.get_by_role("button", name="Clear All", exact=True), "Clear All button")
-                clear_filters.click()
+                try:
+                    clear_filters.click(timeout=5_000)
+                except PlaywrightTimeoutError:
+                    recover_to_accounts_grid(page)
+                    clear_filters.click(timeout=5_000)
                 page.wait_for_timeout(1_200)
                 account_inputs = page.locator('input[id^="424_"][id$="__control"]')
                 if account_inputs.count():
@@ -633,6 +684,7 @@ def main() -> int:
                     ledger.record(pair, "human_needed", message)
                     excel_status.write(pair, "human_needed", message)
                     print(f"HUMAN NEEDED {pair.merge_from} -> {pair.merge_into}: autocomplete target not found")
+                    recover_to_accounts_grid(page)
                     processed += 1
                     continue
 
@@ -648,7 +700,10 @@ def main() -> int:
                 ledger.record(pair, "error", error_message)
                 excel_status.write(pair, "error", error_message)
                 print(f"ERROR {pair.merge_from} -> {pair.merge_into}: {error_message}", file=sys.stderr)
-                break
+                print("RECOVERY: closing any open modal and continuing to the next merge")
+                recover_to_accounts_grid(page)
+                processed += 1
+                continue
             finally:
                 ledger.export_csv(run_dir / "progress.csv")
                 write_summary(run_dir / "summary.json", pairs, ledger, args.input, args.dry_run)

@@ -13,4 +13,8 @@
     <PackageReference Include="Ungerboeck.Api.Sdk" Version="1.254.1.4" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Kallman.Automation.Core\Kallman.Automation.Core.csproj" />
+  </ItemGroup>
+
 </Project>

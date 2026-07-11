@@ -1,4 +1,5 @@
 @echo off
-cd /d "C:\Automations\Production\kallman-automation\momentus\ServiceOrders_FullRebuild"
-echo Starting Exhibitors Pull...
+cd /d "%~dp0"
+echo Starting Service Orders Pull...
 dotnet run
+exit /b %ERRORLEVEL%

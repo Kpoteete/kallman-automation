@@ -172,11 +172,19 @@ public sealed class ExcelService
 
             string value = GetString(worksheet, worksheetRowNumber, col);
             if (string.IsNullOrWhiteSpace(value)) continue;
+            if (IsPlaceholderValue(value)) continue;
 
             fields[mapping.Api] = value;
         }
 
         return fields;
+    }
+
+    private static bool IsPlaceholderValue(string value)
+    {
+        string clean = TextUtil.CleanKeyField(value);
+        return TextUtil.EqualsTrimmedIgnoreCase(clean, "NA") ||
+               TextUtil.EqualsTrimmedIgnoreCase(clean, "N/A");
     }
 
     public string CreateFilteredCopy(
