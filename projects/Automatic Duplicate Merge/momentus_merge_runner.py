@@ -32,7 +32,8 @@ class Pair:
 
     @property
     def pair_id(self) -> str:
-        raw = f"{self.row}|{self.merge_from}|{self.merge_into}"
+        # Row position is metadata, not destructive-operation identity.
+        raw = f"{self.merge_from}|{self.merge_into}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
 
@@ -101,7 +102,27 @@ def load_pairs(path: Path | str, width: int = 8) -> list[Pair]:
         pairs.append(pair)
     if not pairs:
         raise ValueError("No nonblank merge pairs were found.")
+    validate_merge_graph(pairs)
     return pairs
+
+
+def validate_merge_graph(pairs: list[Pair]) -> None:
+    """Reject ambiguous or order-dependent destructive merge plans."""
+    targets_by_source: dict[str, set[str]] = {}
+    sources = {pair.merge_from for pair in pairs}
+    targets = {pair.merge_into for pair in pairs}
+    for pair in pairs:
+        targets_by_source.setdefault(pair.merge_from, set()).add(pair.merge_into)
+    conflicts = {source: targets for source, targets in targets_by_source.items() if len(targets) > 1}
+    if conflicts:
+        details = ", ".join(f"{source} -> {sorted(values)}" for source, values in sorted(conflicts.items()))
+        raise ValueError(f"A source account maps to multiple targets: {details}")
+    overlap = sorted(sources & targets)
+    if overlap:
+        raise ValueError(
+            "Unsafe merge chain/cycle: account(s) appear as both source and target: "
+            + ", ".join(overlap)
+        )
 
 
 class ExcelStatusWriter:
@@ -153,6 +174,7 @@ class ExcelStatusWriter:
             "skipped": "Skipped",
             "error": "Error",
             "human_needed": "Human Needed",
+            "validated": "Dry Run OK",
         }.get(status, status.title())
         updated = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.sheet.cell(pair.row, self.status_col, display_status)
@@ -174,7 +196,7 @@ class ExcelStatusWriter:
             self.sheet.cell(pair.row, self.status_col, {
                 "processing": "Processing", "merged": "Merged",
                 "skipped": "Skipped", "error": "Error",
-                "human_needed": "Human Needed"
+                "human_needed": "Human Needed", "validated": "Dry Run OK"
             }.get(status, str(status).title()))
             self.sheet.cell(pair.row, self.message_col, message or "")
             try:
@@ -368,7 +390,7 @@ def find_exact_merge_target(page, merge_dialog, account_code: str, timeout_ms: i
 def write_summary(path: Path, pairs: list[Pair], ledger: Ledger, input_path: Path, dry_run: bool) -> None:
     counts = {
         status: sum(1 for pair in pairs if ledger.status(pair) == status)
-        for status in ("merged", "skipped", "human_needed", "error")
+        for status in ("merged", "skipped", "validated", "human_needed", "error")
     }
     payload = {
         "input": str(input_path),
@@ -523,14 +545,20 @@ def main() -> int:
                 if len(data_rows) != 1:
                     raise RuntimeError(f"Expected one result, found {len(data_rows)}")
 
+                row = data_rows[0]
+                source_row_text = row.inner_text().strip()
+                if not re.search(rf"(?<!\d){re.escape(pair.merge_from)}(?!\d)", source_row_text):
+                    raise RuntimeError(
+                        f"Visible source row does not contain exact account code {pair.merge_from}: {source_row_text[:250]}"
+                    )
+
                 if args.dry_run:
-                    ledger.record(pair, "skipped", "Dry run: result found, merge not submitted")
-                    excel_status.write(pair, "skipped", "Dry run: result found, merge not submitted")
+                    ledger.record(pair, "validated", "Dry run: exact source found, merge not submitted")
+                    excel_status.write(pair, "validated", "Dry run: exact source found, merge not submitted")
                     print(f"DRY RUN {pair.merge_from} -> {pair.merge_into}")
                     processed += 1
                     continue
 
-                row = data_rows[0]
                 cell = row.locator('[role="gridcell"]').first
                 try:
                     # The source account can disappear between the search result
@@ -625,9 +653,12 @@ def main() -> int:
                 ledger.export_csv(run_dir / "progress.csv")
                 write_summary(run_dir / "summary.json", pairs, ledger, args.input, args.dry_run)
         context.close()
+    terminal_statuses = [ledger.status(pair) for pair in pairs]
     excel_status.close()
     ledger.close()
-    return 0
+    if args.dry_run:
+        return 0 if all(status in {"validated", "skipped", "merged"} for status in terminal_statuses) else 2
+    return 0 if all(status in {"merged", "skipped"} for status in terminal_statuses) else 1
 
 
 if __name__ == "__main__":

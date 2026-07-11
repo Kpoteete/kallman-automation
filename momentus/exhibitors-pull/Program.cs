@@ -18,11 +18,11 @@ class Program
     private const string UngerboeckUri = "https://kallman.ungerboeck.com/prod";
 
     private static readonly string ApiUserId =
-        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "KYLEPAPI";
+        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "";
     private static readonly string Secret =
-        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "8c247eb8-2342-452a-95c3-cf22bd1c6a56";
+        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "";
     private static readonly string Key =
-        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "e2b97782-08d7-40f3-bdbc-fbef5095154c";
+        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "";
 
     private const string OutputFolder =
         @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
@@ -273,7 +273,7 @@ class Program
         "ExhibitorUserFields.UserText50"
     };
 
-    static void Main()
+    static int Main()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
@@ -321,7 +321,9 @@ class Program
                 .OrderBy(r => ToInt(GetValue(r, "ExhibitorID")))
                 .ToList();
 
-            WriteCsv(OutputFilePath, finalRows, DesiredColumns);
+            string tempOutputPath = OutputFilePath + ".tmp";
+            WriteCsv(tempOutputPath, finalRows, DesiredColumns);
+            File.Move(tempOutputPath, OutputFilePath, overwrite: true);
             WriteRunState(RunStatePath, now);
 
             Console.WriteLine($"-> Inserted rows: {inserted:N0}");
@@ -329,16 +331,21 @@ class Program
             Console.WriteLine($"-> Final CSV rows: {finalRows.Count:N0}");
             Console.WriteLine($"-> CSV saved: {OutputFilePath}");
             Console.WriteLine($"-> Run state saved: {RunStatePath}");
+            return 0;
         }
         catch (Exception ex)
         {
-            Console.WriteLine("FATAL:");
-            Console.WriteLine(ex.ToString());
+            Console.Error.WriteLine("FATAL:");
+            Console.Error.WriteLine(ex.ToString());
+            return 1;
         }
     }
 
     private static ApiClient BuildClient()
     {
+        if (string.IsNullOrWhiteSpace(ApiUserId) || string.IsNullOrWhiteSpace(Secret) || string.IsNullOrWhiteSpace(Key))
+            throw new InvalidOperationException(
+                "MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_KEY must be set in the environment.");
         var auth = new Jwt
         {
             APIUserID = ApiUserId,
@@ -449,7 +456,7 @@ class Program
                 if (!exhibitorId.HasValue)
                     continue;
 
-                ExhibitorsModel exportExhibitor = GetFullExhibitor(client, exhibitorId.Value) ?? exhibitor;
+                ExhibitorsModel exportExhibitor = GetFullExhibitor(client, exhibitorId.Value);
 
                 var row = CreateBlankRow();
                 row["PullRunOn"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
@@ -471,7 +478,7 @@ class Program
         return rows;
     }
 
-    private static ExhibitorsModel? GetFullExhibitor(ApiClient client, int exhibitorId)
+    private static ExhibitorsModel GetFullExhibitor(ApiClient client, int exhibitorId)
     {
         try
         {
@@ -479,8 +486,8 @@ class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"-> Full exhibitor pull failed for {exhibitorId}; using search result only. {ex.Message}");
-            return null;
+            throw new InvalidOperationException(
+                $"Full exhibitor pull failed for {exhibitorId}; output and checkpoint were not updated.", ex);
         }
     }
 

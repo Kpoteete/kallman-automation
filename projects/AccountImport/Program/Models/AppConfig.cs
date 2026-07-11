@@ -8,6 +8,7 @@ public sealed class AppConfig
 
     // Safety default: dry-run unless explicitly overridden by --live. v10p auto-runs phases without Y/IMPORT step confirmations.
     public bool DryRun { get; set; } = true;
+    public bool ConfirmProductionWrites { get; set; }
     public int MaxApiRetries { get; set; } = 3;
     public int ApiTimeoutSeconds { get; set; } = 100;
     public bool CleanupPhase0To4AfterArchive { get; set; } = true;

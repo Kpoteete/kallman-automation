@@ -19,11 +19,9 @@ class Program
     private const string OrgCode = "10";
     private const string UngerboeckUri = "https://kallman.ungerboeck.com/prod";
 
-    // Full rebuild version: credentials can come from environment variables.
-    // Fallback values are included so this can run before rotation.
-    private const string DefaultApiUserId = "KYLEPAPI";
-    private const string DefaultSecret = "8c247eb8-2342-452a-95c3-cf22bd1c6a56";
-    private const string DefaultKey = "e2b97782-08d7-40f3-bdbc-fbef5095154c";
+    private const string DefaultApiUserId = "";
+    private const string DefaultSecret = "";
+    private const string DefaultKey = "";
 
     private const string OutputFolder =
         @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
@@ -275,7 +273,7 @@ class Program
     };
 
 
-    static void Main()
+    static int Main()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
@@ -306,18 +304,17 @@ class Program
 
             WriteCsv(TempOutputFilePath, finalRows, DesiredColumns);
 
-            if (File.Exists(OutputFilePath))
-                File.Delete(OutputFilePath);
-
-            File.Move(TempOutputFilePath, OutputFilePath);
+            File.Move(TempOutputFilePath, OutputFilePath, overwrite: true);
 
             Console.WriteLine($"-> Final CSV rows: {finalRows.Count:N0}");
             Console.WriteLine($"-> CSV saved: {OutputFilePath}");
+            return 0;
         }
         catch (Exception ex)
         {
-            Console.WriteLine("FATAL:");
-            Console.WriteLine(ex.ToString());
+            Console.Error.WriteLine("FATAL:");
+            Console.Error.WriteLine(ex.ToString());
+            return 1;
         }
     }
 
@@ -326,6 +323,10 @@ class Program
         string apiUserId = GetEnvironmentVariableOrDefault("MOMENTUS_APIUSER", DefaultApiUserId);
         string secret = GetEnvironmentVariableOrDefault("MOMENTUS_SECRET", DefaultSecret);
         string key = GetEnvironmentVariableOrDefault("MOMENTUS_KEY", DefaultKey);
+
+        if (string.IsNullOrWhiteSpace(apiUserId) || string.IsNullOrWhiteSpace(secret) || string.IsNullOrWhiteSpace(key))
+            throw new InvalidOperationException(
+                "MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_KEY must be set in the environment.");
 
         var auth = new Jwt
         {

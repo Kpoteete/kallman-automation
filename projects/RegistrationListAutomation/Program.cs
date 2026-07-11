@@ -323,7 +323,7 @@ class Program
     // MAIN
     // ============================================================
 
-    static void Main()
+    static int Main()
     {
         Console.OutputEncoding = Encoding.UTF8;
 
@@ -388,7 +388,7 @@ class Program
         if (upcomingEvents.Count == 0)
         {
             Console.WriteLine("No upcoming events found. Program complete.");
-            return;
+            return 0;
         }
 
         Dictionary<string, List<Dictionary<string, string>>> exhibitorsByEventId =
@@ -513,6 +513,7 @@ class Program
         Console.WriteLine("Registration List Automation complete.");
         Console.WriteLine($"Successful events: {successfulEvents:N0}");
         Console.WriteLine($"Failed events: {failedEvents:N0}");
+        return failedEvents == 0 ? 0 : 1;
     }
 
     // ============================================================

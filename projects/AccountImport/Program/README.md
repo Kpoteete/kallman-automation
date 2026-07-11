@@ -83,9 +83,9 @@ dotnet add package Ungerboeck.Api.Sdk --version <your-compatible-version>
 Use user-level variables:
 
 ```powershell
-setx MOMENTUS_APIUSER "KYLEPAPI"
-setx MOMENTUS_SECRET "8c247eb8-2342-452a-95c3-cf22bd1c6a56"
-setx MOMENTUS_KEY "e2b97782-08d7-40f3-bdbc-fbef5095154c"
+setx MOMENTUS_APIUSER "your-api-user"
+setx MOMENTUS_SECRET "your-secret"
+setx MOMENTUS_KEY "your-key"
 ```
 
 Close and reopen PowerShell after using `setx`, then confirm:

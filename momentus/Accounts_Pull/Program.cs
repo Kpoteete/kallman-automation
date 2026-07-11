@@ -18,7 +18,7 @@ class Program
     private const string OrgCode = "10";
 
     private static readonly string ApiUserId =
-        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "KYLEPAPI";
+        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "";
 
     private static readonly string Secret =
         Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "";

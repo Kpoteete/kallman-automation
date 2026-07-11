@@ -1,4 +1,5 @@
 import socket
+import ipaddress
 import requests
 from openpyxl import load_workbook, Workbook
 from tkinter import Tk, filedialog
@@ -55,13 +56,7 @@ def website_is_good(domain):
 
     for url in urls_to_try:
         try:
-            response = requests.get(
-                url,
-                headers=headers,
-                timeout=TIMEOUT_SECONDS,
-                allow_redirects=True,
-                stream=True
-            )
+            response = safe_get(url, headers)
 
             status_code = response.status_code
             response.close()
@@ -92,6 +87,41 @@ def website_is_good(domain):
             last_error = type(e).__name__
 
     return False, last_error or "Failed"
+
+
+def validate_public_url(url):
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Unsupported URL")
+    if parsed.username or parsed.password or parsed.port not in {None, 80, 443}:
+        raise ValueError("Credentials or nonstandard ports are not allowed")
+    if parsed.hostname.lower() == "localhost":
+        raise ValueError("Local addresses are not allowed")
+    for _, _, _, _, sockaddr in socket.getaddrinfo(parsed.hostname, parsed.port or 443):
+        address = ipaddress.ip_address(sockaddr[0])
+        if not address.is_global:
+            raise ValueError(f"Non-public address is not allowed: {address}")
+
+
+def safe_get(url, headers, max_redirects=5):
+    """GET only public HTTP(S) targets, validating every redirect hop."""
+    from urllib.parse import urljoin
+    current = url
+    for _ in range(max_redirects + 1):
+        validate_public_url(current)
+        response = requests.get(
+            current, headers=headers, timeout=TIMEOUT_SECONDS,
+            allow_redirects=False, stream=True
+        )
+        if response.is_redirect or response.is_permanent_redirect:
+            location = response.headers.get("Location")
+            response.close()
+            if not location:
+                raise requests.RequestException("Redirect missing Location")
+            current = urljoin(current, location)
+            continue
+        return response
+    raise requests.TooManyRedirects("Too many redirects")
 
 
 def check_domain_task(row_number, original_value):
@@ -177,10 +207,10 @@ def main():
     results = []
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [
-            executor.submit(check_domain_task, row_number, value)
+        futures = {
+            executor.submit(check_domain_task, row_number, value): (row_number, value)
             for row_number, value in jobs
-        ]
+        }
 
         for future in as_completed(futures):
             completed += 1
@@ -188,10 +218,11 @@ def main():
             try:
                 result = future.result()
             except Exception as e:
+                row_number, value = futures[future]
                 result = {
-                    "row": None,
-                    "original_value": None,
-                    "domain": None,
+                    "row": row_number,
+                    "original_value": value,
+                    "domain": normalize_domain(value),
                     "status": "Bad",
                     "reason": f"Script error: {type(e).__name__}"
                 }

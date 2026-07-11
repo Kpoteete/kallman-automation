@@ -1,29 +1,39 @@
-# Secrets
+# Secrets and machine-local configuration
 .env
 *.local.json
 secrets.json
 appsettings.Production.json
 appsettings.Development.json
 
-# .NET build output
+runs/
+.momentus-profile/
+.pilot-profile*/
+.codex-work/
 bin/
 obj/
-
-# Output files
+__pycache__/
+*.pyc
+*.user
+*.suo
+*.html
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.docx
+*.pptx
+*.sqlite
+*.sqlite3
+*.db
+progress.csv
+summary.json
+*.last_run.txt
+*.tmp
+*.bak
 *.xlsx
 *.csv
 *.log
-
-# Office temp files
 ~$*
-
-# Windows junk
 Thumbs.db
 .DS_Store
-
-# VS Code
 .vscode/
-
-# User-specific files
-*.user
-*.suo

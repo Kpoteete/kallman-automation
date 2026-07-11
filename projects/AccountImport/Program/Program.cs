@@ -84,6 +84,10 @@ public static class Program
             {
                 config.DryRun = true;
             }
+            else if (string.Equals(arg, "--confirm-production-writes", StringComparison.OrdinalIgnoreCase))
+            {
+                config.ConfirmProductionWrites = true;
+            }
             else if (string.Equals(arg, "--root", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
             {
                 config.RootPath = args[++i];
@@ -96,6 +100,9 @@ public static class Program
             throw new InvalidOperationException("MomentusUri is blank in configuration.");
         if (string.IsNullOrWhiteSpace(config.OrgCode))
             throw new InvalidOperationException("OrgCode is blank in configuration.");
+        if (!config.DryRun && !config.ConfirmProductionWrites)
+            throw new InvalidOperationException(
+                "Live mode requires both --live and --confirm-production-writes.");
 
         return config;
     }

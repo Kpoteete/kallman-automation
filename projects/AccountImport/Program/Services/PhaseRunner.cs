@@ -791,7 +791,9 @@ public sealed class PhaseRunner
     {
         if (_config.DryRun || _liveConfirmed) return;
 
-        Console.WriteLine("LIVE MODE ENABLED. Auto-run is enabled, so Phase 3 Momentus writes will start now without typing IMPORT.");
+        if (!_config.ConfirmProductionWrites)
+            throw new InvalidOperationException("Live writes were not confirmed with --confirm-production-writes.");
+        Console.WriteLine("LIVE MODE ENABLED. Production writes were explicitly confirmed.");
         _liveConfirmed = true;
     }
 

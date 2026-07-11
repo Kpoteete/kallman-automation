@@ -13,9 +13,9 @@ using Ungerboeck.Api.Sdk;
 class Program
 {
     private const string ApiUrl = "https://kallman.ungerboeck.com/prod";
-    private const string ApiUser = "KYLEPAPI";
-    private const string ApiPassword = "8c247eb8-2342-452a-95c3-cf22bd1c6a56";
-    private const string ApiKey = "e2b97782-08d7-40f3-bdbc-fbef5095154c";
+    private static readonly string ApiUser = Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "";
+    private static readonly string ApiPassword = Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "";
+    private static readonly string ApiKey = Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "";
     private const string OrgCode = "10";
 
     private static readonly DateTime LookbackStartDate = new DateTime(2026, 3, 1);
@@ -90,6 +90,9 @@ class Program
 
     private static ApiClient BuildClient()
     {
+        if (string.IsNullOrWhiteSpace(ApiUser) || string.IsNullOrWhiteSpace(ApiPassword) || string.IsNullOrWhiteSpace(ApiKey))
+            throw new InvalidOperationException(
+                "MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_KEY must be set in the environment.");
         var auth = new Jwt
         {
             APIUserID = ApiUser,

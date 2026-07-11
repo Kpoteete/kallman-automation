@@ -21,11 +21,11 @@ class Program
     private const string UngerboeckUri = "https://kallman.ungerboeck.com/prod";
 
     private static readonly string ApiUserId =
-        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "KYLEPAPI";
+        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "";
     private static readonly string Secret =
-        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "8c247eb8-2342-452a-95c3-cf22bd1c6a56";
+        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "";
     private static readonly string Key =
-        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "e2b97782-08d7-40f3-bdbc-fbef5095154c";
+        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "";
 
     private const string OutputFolder =
         @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
@@ -222,7 +222,7 @@ class Program
         "ServiceOrderUserFieldSets[0].UserText50"
     };
 
-    static void Main()
+    static int Main()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
@@ -261,26 +261,28 @@ class Program
 
             WriteCsv(TempOutputFilePath, finalRows, DesiredColumns);
 
-            if (File.Exists(OutputFilePath))
-                File.Delete(OutputFilePath);
-
-            File.Move(TempOutputFilePath, OutputFilePath);
+            File.Move(TempOutputFilePath, OutputFilePath, overwrite: true);
 
             if (File.Exists(RunStatePath))
                 File.Delete(RunStatePath);
 
             Console.WriteLine($"-> CSV rebuilt and saved: {OutputFilePath}");
             Console.WriteLine("-> Old incremental run-state file removed.");
+            return 0;
         }
         catch (Exception ex)
         {
-            Console.WriteLine("FATAL:");
-            Console.WriteLine(ex.ToString());
+            Console.Error.WriteLine("FATAL:");
+            Console.Error.WriteLine(ex.ToString());
+            return 1;
         }
     }
 
     private static ApiClient BuildClient()
     {
+        if (string.IsNullOrWhiteSpace(ApiUserId) || string.IsNullOrWhiteSpace(Secret) || string.IsNullOrWhiteSpace(Key))
+            throw new InvalidOperationException(
+                "MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_KEY must be set in the environment.");
         var auth = new Jwt
         {
             APIUserID = ApiUserId,
