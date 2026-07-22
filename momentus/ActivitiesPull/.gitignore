@@ -1,0 +1,16 @@
+bin/
+obj/
+publish/
+logs/
+server-package-*/
+server-package-*.zip
+TestResults/
+*.user
+*.tmp
+*.building
+_ActivitiesPull_staging/
+Activities_Pull.full_state.json
+Activities_Pull.csv
+Activities_Pull.previous.csv
+Activities_Pull.last_run.txt
+Activities_Pull.lock
