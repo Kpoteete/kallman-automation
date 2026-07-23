@@ -1,0 +1,29 @@
+<Solution>
+  <Folder Name="/shared/">
+    <Project Path="src/Kallman.Automation.Core/Kallman.Automation.Core.csproj" />
+    <Project Path="tests/Kallman.Automation.Core.Tests/Kallman.Automation.Core.Tests.csproj" />
+  </Folder>
+  <Folder Name="/momentus/">
+    <Project Path="momentus/Accounts_Pull/Accounts_Pull.csproj" />
+    <Project Path="momentus/Account_name_punctuation_and_email_cleanup/Account_name_punctuation_and_email_cleanup.csproj" />
+    <Project Path="momentus/EventsPull/EventsPull.csproj" />
+    <Project Path="momentus/exhibitors-pull/ExhbitorPull.csproj" />
+    <Project Path="momentus/NotesPull/NotesPull.csproj" />
+    <Project Path="momentus/ServiceOrderItems_FullRebuild/ServiceOrderItemsPull.csproj" />
+    <Project Path="momentus/ServiceOrderPull/ServiceOrderPull.csproj" />
+    <Project Path="momentus/ServiceOrders_FullRebuild/ServiceOrdersPull.csproj" />
+    <Project Path="momentus/WebsiteCorrectionDaily/WebsiteCorrectionDaily.csproj" />
+  </Folder>
+  <Folder Name="/momentus/incremental/">
+    <Project Path="momentus/ServiceOrderItemsPull/ServiceOrderItemsPull.csproj" />
+  </Folder>
+  <Folder Name="/projects/">
+    <Project Path="projects/AccountImport/Program/AccountImport.csproj" />
+    <Project Path="projects/AccountsDataIntegrityReport/Program_Momentus_AccountExport_WithAffiliations.csproj" />
+    <Project Path="projects/DuplicateMerging/DuplicateMerging.csproj" />
+    <Project Path="projects/MarketSegmentApplication/MarketSegmentApplication.csproj" />
+    <Project Path="projects/RegistrationListAutomation/RegistrationListAutomation.csproj" />
+    <Project Path="projects/StaleMomentusAccountReport/src/StaleMomentusAccountReport/StaleMomentusAccountReport.csproj" />
+    <Project Path="projects/StaleMomentusAccountReport/tests/StaleMomentusAccountReport.Tests/StaleMomentusAccountReport.Tests.csproj" />
+  </Folder>
+</Solution>

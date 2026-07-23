@@ -11,6 +11,8 @@ using Ungerboeck.Api.Models.Authorization;
 using Ungerboeck.Api.Models.Search;
 using Ungerboeck.Api.Models.Subjects;
 using Ungerboeck.Api.Sdk;
+using Kallman.Automation.Core.Configuration;
+using Kallman.Automation.Core.Files;
 
 // Full rebuild version for ServiceOrders.
 // Pulls ServiceOrders by OrderNumber from 1 to 50,000 in 1,000-order batches.
@@ -20,15 +22,9 @@ class Program
     private const string OrgCode = "10";
     private const string UngerboeckUri = "https://kallman.ungerboeck.com/prod";
 
-    private static readonly string ApiUserId =
-        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "";
-    private static readonly string Secret =
-        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "";
-    private static readonly string Key =
-        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "";
-
-    private const string OutputFolder =
-        @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
+    private static readonly string OutputFolder =
+        Environment.GetEnvironmentVariable("SERVICE_ORDERS_OUTPUT_FOLDER")
+        ?? @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
 
     private static readonly string OutputFilePath = Path.Combine(OutputFolder, "ServiceOrders_Pull.csv");
     private static readonly string TempOutputFilePath = Path.Combine(OutputFolder, "ServiceOrders_Pull.tmp.csv");
@@ -261,7 +257,7 @@ class Program
 
             WriteCsv(TempOutputFilePath, finalRows, DesiredColumns);
 
-            File.Move(TempOutputFilePath, OutputFilePath, overwrite: true);
+            AtomicFilePublisher.Publish(TempOutputFilePath, OutputFilePath, OutputFilePath + ".bak");
 
             if (File.Exists(RunStatePath))
                 File.Delete(RunStatePath);
@@ -280,14 +276,12 @@ class Program
 
     private static ApiClient BuildClient()
     {
-        if (string.IsNullOrWhiteSpace(ApiUserId) || string.IsNullOrWhiteSpace(Secret) || string.IsNullOrWhiteSpace(Key))
-            throw new InvalidOperationException(
-                "MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_KEY must be set in the environment.");
+        MomentusCredentials credentials = MomentusCredentials.FromEnvironment();
         var auth = new Jwt
         {
-            APIUserID = ApiUserId,
-            Secret = Secret,
-            Key = Key,
+            APIUserID = credentials.ApiUserId,
+            Secret = credentials.Secret,
+            Key = credentials.Key,
             UngerboeckURI = UngerboeckUri,
             AutoRefresh = new AutoRefresh()
         };

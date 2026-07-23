@@ -15,27 +15,31 @@ class Program
     private const string OrgCode = "10";
 
     private static readonly string ApiUserId =
-        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "KYLEPAPI";
+        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER")?.Trim() ?? "";
 
     private static readonly string Secret =
-        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "8c247eb8-2342-452a-95c3-cf22bd1c6a56";
+        Environment.GetEnvironmentVariable("MOMENTUS_SECRET")?.Trim() ?? "";
 
     private static readonly string Key =
-        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "e2b97782-08d7-40f3-bdbc-fbef5095154c";
+        Environment.GetEnvironmentVariable("MOMENTUS_KEY")?.Trim() ?? "";
 
     private const string AccountChangedDateFieldName = "ChangedOn";
     private const string AccountClassFieldName = "Class";
     private const string AccountClassValue = "Organization";
 
-    static void Main(string[] args)
+    static int Main(string[] args)
     {
+        bool applyChanges = args.Contains("--apply", StringComparer.OrdinalIgnoreCase);
+        Console.WriteLine(applyChanges
+            ? "LIVE MODE: approved website corrections will be written to Momentus."
+            : "DRY RUN: no Momentus records will be changed. Pass --apply to write changes.");
         Console.WriteLine("Initializing Momentus API Client...");
 
-        if (Secret == "PASTE_SECRET_HERE" || Key == "PASTE_KEY_HERE")
+        if (string.IsNullOrWhiteSpace(ApiUserId) || string.IsNullOrWhiteSpace(Secret) || string.IsNullOrWhiteSpace(Key))
         {
-            Console.WriteLine("ERROR: API Secret/Key are missing.");
-            Console.WriteLine("Set MOMENTUS_SECRET and MOMENTUS_KEY environment variables, or paste them into Program.cs locally.");
-            return;
+            Console.WriteLine("ERROR: Momentus API credentials are missing.");
+            Console.WriteLine("Set MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_KEY environment variables.");
+            return 1;
         }
 
         var client = BuildClient();
@@ -77,7 +81,7 @@ class Program
             if (response == null || response.Results == null)
             {
                 Console.WriteLine("No accounts returned from Momentus.");
-                return;
+                return 0;
             }
 
             var accounts = response.Results.ToList();
@@ -135,7 +139,8 @@ class Program
 
                     account.Website = newWebsite;
 
-                    client.Endpoints.Accounts.Update(account);
+                    if (applyChanges)
+                        client.Endpoints.Accounts.Update(account);
 
                     updatedCount++;
 
@@ -183,7 +188,7 @@ class Program
             Console.WriteLine("Possible alternatives may be AccountClass, Type, or AccountType depending on the API model.");
             Console.WriteLine();
 
-            return;
+            return 1;
         }
 
         string logFileName = $"WebsiteCleanupLog_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
@@ -199,6 +204,7 @@ class Program
         Console.WriteLine($"Errors:                         {errorCount}");
         Console.WriteLine($"Log File:                       {logFileName}");
         Console.WriteLine("================================");
+        return errorCount == 0 ? 0 : 1;
     }
 
     private static string CleanWebsite(string website)

@@ -9,6 +9,15 @@ runs/
 .momentus-profile/
 .pilot-profile*/
 .codex-work/
+**/outputs/
+artifacts/
+**/logs/
+**/00 Control/
+**/01 Pending Review/
+**/02 Approved/
+**/03 Completed/
+**/04 Failed/
+**/99 History/
 bin/
 obj/
 __pycache__/
@@ -30,6 +39,11 @@ summary.json
 *.last_run.txt
 *.tmp
 *.bak
+*_backup*.py
+*_backup*.ps1
+diagnose_*.py
+appsettings.local.json
+projects/Schedule of events/8961AB00
 *.xlsx
 *.csv
 *.log

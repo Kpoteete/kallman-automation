@@ -18,14 +18,15 @@ class Program
     private const string UngerboeckUri = "https://kallman.ungerboeck.com/prod";
 
     private static readonly string ApiUserId =
-        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "KYLEPAPI";
+        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER")?.Trim() ?? "";
     private static readonly string Secret =
-        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "8c247eb8-2342-452a-95c3-cf22bd1c6a56";
+        Environment.GetEnvironmentVariable("MOMENTUS_SECRET")?.Trim() ?? "";
     private static readonly string Key =
-        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "e2b97782-08d7-40f3-bdbc-fbef5095154c";
+        Environment.GetEnvironmentVariable("MOMENTUS_KEY")?.Trim() ?? "";
 
-    private const string OutputFolder =
-        @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
+    private static readonly string OutputFolder =
+        Environment.GetEnvironmentVariable("KALLMAN_DATA_WAREHOUSE")?.Trim()
+        ?? @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
 
     private static readonly string OutputFilePath = Path.Combine(OutputFolder, "ServiceOrders_Pull.csv");
     private static readonly string RunStatePath = Path.Combine(OutputFolder, "ServiceOrder_Pull.last_run.txt");
@@ -214,12 +215,13 @@ class Program
         "ServiceOrderUserFieldSets[0].UserText50"
     };
 
-    static void Main()
+    static int Main()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
         try
         {
+            ValidateCredentials();
             Directory.CreateDirectory(OutputFolder);
 
             Console.WriteLine("-> Building Momentus client...");
@@ -262,7 +264,9 @@ class Program
                 .OrderBy(r => ToInt(GetValue(r, "OrderNumber")))
                 .ToList();
 
-            WriteCsv(OutputFilePath, finalRows, DesiredColumns);
+            string tempPath = OutputFilePath + ".tmp";
+            WriteCsv(tempPath, finalRows, DesiredColumns);
+            File.Move(tempPath, OutputFilePath, true);
             WriteRunState(RunStatePath, now);
 
             Console.WriteLine($"-> Inserted rows: {inserted:N0}");
@@ -270,12 +274,20 @@ class Program
             Console.WriteLine($"-> Final CSV rows: {finalRows.Count:N0}");
             Console.WriteLine($"-> CSV saved: {OutputFilePath}");
             Console.WriteLine($"-> Run state saved: {RunStatePath}");
+            return 0;
         }
         catch (Exception ex)
         {
             Console.WriteLine("FATAL:");
             Console.WriteLine(ex.ToString());
+            return 1;
         }
+    }
+
+    private static void ValidateCredentials()
+    {
+        if (string.IsNullOrWhiteSpace(ApiUserId) || string.IsNullOrWhiteSpace(Secret) || string.IsNullOrWhiteSpace(Key))
+            throw new InvalidOperationException("Set MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_KEY before running.");
     }
 
     private static ApiClient BuildClient()

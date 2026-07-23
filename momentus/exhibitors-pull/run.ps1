@@ -7,3 +7,4 @@ Write-Host "Folder: $PSScriptRoot"
 Set-Location $PSScriptRoot
 
 dotnet run
+exit $LASTEXITCODE

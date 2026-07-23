@@ -17,26 +17,30 @@ class Program
     private const string OrgCode = "10";
 
     private static readonly string ApiUserId =
-        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "KYLEPAPI";
+        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER")?.Trim() ?? "";
 
     private static readonly string Secret =
-        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "8c247eb8-2342-452a-95c3-cf22bd1c6a56";
+        Environment.GetEnvironmentVariable("MOMENTUS_SECRET")?.Trim() ?? "";
 
     private static readonly string Key =
-        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "e2b97782-08d7-40f3-bdbc-fbef5095154c";
+        Environment.GetEnvironmentVariable("MOMENTUS_KEY")?.Trim() ?? "";
 
     private const string ChangedDateFieldName = "ChangedOn";
 
-    static int Main()
+    static int Main(string[] args)
     {
         try
         {
+            bool applyChanges = args.Contains("--apply", StringComparer.OrdinalIgnoreCase);
+            Console.WriteLine(applyChanges
+                ? "LIVE MODE: approved cleanup changes will be written to Momentus."
+                : "DRY RUN: no Momentus records will be changed. Pass --apply to write changes.");
             Console.WriteLine("Initializing Momentus API Client...");
 
-            if (Secret == "PASTE_SECRET_HERE" || Key == "PASTE_KEY_HERE")
+            if (string.IsNullOrWhiteSpace(ApiUserId) || string.IsNullOrWhiteSpace(Secret) || string.IsNullOrWhiteSpace(Key))
             {
-                Console.WriteLine("ERROR: API Secret/Key are missing.");
-                Console.WriteLine("Set MOMENTUS_SECRET and MOMENTUS_KEY environment variables, or paste them into Program.cs locally.");
+                Console.WriteLine("ERROR: Momentus API credentials are missing.");
+                Console.WriteLine("Set MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_KEY environment variables.");
                 return 1;
             }
 
@@ -53,13 +57,13 @@ class Program
             Console.WriteLine($"Looking for records changed since: {changedSinceText}");
             Console.WriteLine();
 
-            RunAccountNamePunctuationCleanup(client, changedSinceText, timestamp);
+            RunAccountNamePunctuationCleanup(client, changedSinceText, timestamp, applyChanges);
 
             Console.WriteLine();
             Console.WriteLine("--------------------------------");
             Console.WriteLine();
 
-            RunContactEmailCleanup(client, changedSinceText, timestamp);
+            RunContactEmailCleanup(client, changedSinceText, timestamp, applyChanges);
 
             Console.WriteLine();
             Console.WriteLine("================================");
@@ -80,7 +84,7 @@ class Program
     // JOB 1: ORGANIZATION ACCOUNT NAME PUNCTUATION CLEANUP
     // ============================================================
 
-    private static void RunAccountNamePunctuationCleanup(ApiClient client, string changedSinceText, string timestamp)
+    private static void RunAccountNamePunctuationCleanup(ApiClient client, string changedSinceText, string timestamp, bool applyChanges)
     {
         Console.WriteLine("JOB 1: Account name punctuation cleanup");
         Console.WriteLine("Searching organization account records changed in the last 1 day.");
@@ -175,7 +179,8 @@ class Program
 
                     account.Name = newName;
 
-                    client.Endpoints.Accounts.Update(account);
+                    if (applyChanges)
+                        client.Endpoints.Accounts.Update(account);
 
                     updatedCount++;
 
@@ -311,7 +316,7 @@ class Program
     // JOB 2: CONTACT EMAIL CLEANUP
     // ============================================================
 
-    private static void RunContactEmailCleanup(ApiClient client, string changedSinceText, string timestamp)
+    private static void RunContactEmailCleanup(ApiClient client, string changedSinceText, string timestamp, bool applyChanges)
     {
         Console.WriteLine("JOB 2: Contact email cleanup");
         Console.WriteLine("Searching contact records changed in the last 1 day.");
@@ -436,7 +441,8 @@ class Program
 
                     contact.Email = newEmail;
 
-                    client.Endpoints.Accounts.Update(contact);
+                    if (applyChanges)
+                        client.Endpoints.Accounts.Update(contact);
 
                     updatedCount++;
 

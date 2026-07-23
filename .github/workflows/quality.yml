@@ -12,13 +12,34 @@ jobs:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
       - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Reject hard-coded Momentus credential fallbacks
+        shell: pwsh
+        run: |
+          $pattern = 'GetEnvironmentVariable\("MOMENTUS_(APIUSER|SECRET|KEY)"\)\s*\?\?\s*"[^"\s]+"'
+          $matches = Get-ChildItem -Recurse -Include *.cs,*.ps1,*.py |
+            Select-String -Pattern $pattern
+          if ($matches) {
+            $matches | ForEach-Object { Write-Error "Hard-coded Momentus credential fallback: $($_.Path):$($_.LineNumber)" }
+            exit 1
+          }
   python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
+      - run: python -m pip install -r requirements-dev.txt
       - run: python -m compileall -q projects
+      - run: python -m pytest -q tests/python
+      - name: Reject tracked generated artifacts
+        shell: bash
+        run: |
+          if git ls-files | grep -Ei '(^|/)(bin|obj|runs|\.codex-work|\.momentus-profile)(/|$)|(^|/)(progress\.csv|summary\.json)$'; then
+            echo "Generated or diagnostic artifacts must not be tracked."
+            exit 1
+          fi
   dotnet:
     runs-on: windows-latest
     steps:
@@ -31,8 +52,15 @@ jobs:
       - name: Restore and build every project
         shell: pwsh
         run: |
-          $projects = Get-ChildItem -Recurse -Filter *.csproj
+          dotnet restore Kallman.Automation.slnx
+          dotnet build Kallman.Automation.slnx --configuration Release --no-restore
+      - name: Run automated tests
+        run: dotnet test Kallman.Automation.slnx --configuration Release --no-build
+      - name: Report vulnerable NuGet dependencies
+        shell: pwsh
+        run: |
+          $projects = Get-ChildItem -Recurse -Filter *.csproj | Where-Object FullName -NotMatch '\\(bin|obj)\\'
           foreach ($project in $projects) {
-            dotnet restore $project.FullName
-            dotnet build $project.FullName --configuration Release --no-restore
+            dotnet list $project.FullName package --vulnerable --include-transitive
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
