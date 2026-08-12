@@ -44,7 +44,7 @@ class Program
 
         var client = BuildClient();
 
-        DateTime changedSinceUtc = DateTime.UtcNow.AddDays(-1);
+        DateTime changedSinceUtc = DateTime.UtcNow.AddDays(-7);
 
         // Edm.DateTime filter format: no Z, no milliseconds
         string changedSinceText = changedSinceUtc.ToString("yyyy-MM-ddTHH:mm:ss");

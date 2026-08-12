@@ -1,0 +1,69 @@
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Threading.Tasks;
+using Ungerboeck.Api.Models;
+using Ungerboeck.Api.Models.Options;
+using Ungerboeck.Api.Models.Options.Subjects;
+using Ungerboeck.Api.Models.Subjects;
+
+namespace Ungerboeck.Api.Sdk.Endpoints
+{
+  /// <summary>
+  /// Find endpoint calls for this subject here.
+  /// </summary>
+  public class Vouchers : Base<VouchersModel>
+  {
+    protected internal Vouchers(ApiClient api) : base(api) { }
+
+    /// <summary>
+    /// Use this endpoint to search for a list of this subject.
+    /// </summary>
+    /// <param name="searchMetadata">After searching, this will contain search info, such as ResultsTotal.  If your search resulted in more than one page, this will also be filled with API links to navigate pages.</param>
+    /// <param name="orgCode">Fill this with the Organization Code in which the search will take place.</param>
+    /// <param name="searchOData">Fill this with OData to query for what you are looking for.  We highly suggest reading our 'Search Using the API' knowledge base article or Ungerboeck API Github examples to learn how to do this. </param>
+    /// <param name="options">This contains optional configurations used for searching.</param>
+    /// <returns>A list of this subject's model.</returns>
+    public new Ungerboeck.Api.Models.Search.SearchResponse<VouchersModel> Search(string orgCode, string searchOData, Search options = null)
+    {
+      return base.Search(orgCode, searchOData, options);
+    }
+
+    /// <summary>
+    /// Use this endpoint to get a single entry of this subject with parameters.
+    /// </summary>
+    /// <param name="options">This contains optional configurations.</param>
+    /// <returns>A single model for this subject.</returns>
+    public VouchersModel Get(string orgCode, int voucher, Ungerboeck.Api.Models.Options.Subjects.Vouchers options = null)
+    {
+      return base.Get(new { orgCode, voucher }, options);
+    }
+
+    /// <summary>
+    /// Use this endpoint to delete a single entry of this subject.
+    /// </summary>
+    /// <param name="options">This contains optional configurations.</param>
+    public HttpResponseMessage Delete(string orgCode, int voucher, Ungerboeck.Api.Models.Options.Subjects.Vouchers options = null)
+    {
+      return base.Delete(new { orgCode, voucher }, options);
+    }
+
+    public HttpResponseMessage Void(string orgCode, int voucher, Ungerboeck.Api.Models.Options.Subjects.Vouchers options = null)
+    {
+      object item = null; //This endpoint does not have a posted item
+      return CustomSync(base.PostAsync<object, HttpResponseMessage>(Client, $"Vouchers/{orgCode}/{voucher}/Void", item, options));
+    }
+
+    /// <summary>
+    /// Import vouchers in bulk.
+    /// </summary>
+    /// <param name="model">The bulk voucher import model to import.</param>
+    /// <param name="options">This contains optional configurations.</param>
+    /// <returns>The response model for the bulk voucher import operation.</returns>
+    public Task<VoucherImportBulkResponseModel> ImportBulk(VoucherImportBulkModel model, Ungerboeck.Api.Models.Options.Subjects.Vouchers options = null)
+    {
+      Task<VoucherImportBulkResponseModel> task = PostAsync<VoucherImportBulkModel, VoucherImportBulkResponseModel>(Client, "Vouchers/ImportBulk", model, options);
+      return task;
+    }
+
+  }
+}

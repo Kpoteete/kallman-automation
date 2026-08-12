@@ -46,7 +46,7 @@ class Program
 
             var client = BuildClient();
 
-            DateTime changedSinceUtc = DateTime.UtcNow.AddDays(-1);
+            DateTime changedSinceUtc = DateTime.UtcNow.AddDays(-70);
 
             // Momentus Edm.DateTime filter format.
             // Example: ChangedOn ge datetime'2026-05-18T15:54:28'

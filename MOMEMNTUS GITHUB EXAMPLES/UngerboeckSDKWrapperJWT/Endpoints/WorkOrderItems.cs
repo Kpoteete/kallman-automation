@@ -1,0 +1,53 @@
+using System.Net.Http;
+using System.Threading.Tasks;
+using Ungerboeck.Api.Models.Options;
+using Ungerboeck.Api.Models.Options.Subjects;
+using Ungerboeck.Api.Models.Subjects;
+
+namespace Ungerboeck.Api.Sdk.Endpoints
+{
+  /// <summary>
+  /// Find endpoint calls for this subject here.
+  /// </summary>
+  public class WorkOrderItems : Base<WorkOrderItemsModel>
+  {
+    protected internal WorkOrderItems(ApiClient api) : base(api) { }
+
+    /// <summary>
+    /// Use this endpoint to search for a list of this subject.
+    /// </summary>
+    /// <param name="searchMetadata">After searching, this will contain search info, such as ResultsTotal.  If your search resulted in more than one page, this will also be filled with API links to navigate pages.</param>
+    /// <param name="orgCode">Fill this with the Organization Code in which the search will take place.</param>
+    /// <param name="searchOData">Fill this with OData to query for what you are looking for.  We highly suggest reading our 'Search Using the API' knowledge base article or Ungerboeck API Github examples to learn how to do this. </param>
+    /// <param name="options">This contains optional configurations used for searching.</param>
+    /// <returns>A list of this subject's model.</returns>
+    public new Ungerboeck.Api.Models.Search.SearchResponse<WorkOrderItemsModel> Search(string orgCode, string searchOData, Search options = null)
+    {
+      return base.Search(orgCode, searchOData, options);
+    }
+
+    /// <summary>
+    /// Use this endpoint to get a single entry of this subject with parameters.
+    /// </summary>
+    /// <param name="options">This contains optional configurations.</param>
+    /// <returns>A single model for this subject.</returns>
+    public WorkOrderItemsModel Get(string orgCode, int orderNumber, int orderLineNumber, Ungerboeck.Api.Models.Options.Subjects.WorkOrderItems options = null)
+    {
+      return base.Get(new { orgCode, orderNumber, orderLineNumber }, options);
+    }
+
+    /// <summary>
+    /// Custom endpoint. Use this action async endpoint to a specific work order item to status Complete.
+    /// </summary>
+    /// <param name="model">Fill this with the specific model class that contains relevant data to the request.</param>
+    /// <param name="options"></param>
+    /// <returns>HttpResponseMessage indicating success</returns>
+    public Task<HttpResponseMessage> CompleteItemAsync(WorkOrderItemCompleteItemModel model, 
+      Ungerboeck.Api.Models.Options.Subjects.WorkOrderItems options = null)
+    {
+      Task<HttpResponseMessage> response = PutAsync<WorkOrderItemCompleteItemModel, HttpResponseMessage>(Client, 
+        "WorkOrderItems/CompleteItem", model, options);
+      return response;
+    }
+  }
+}
