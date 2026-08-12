@@ -1,0 +1,6 @@
+bin/
+obj/
+publish/
+logs/
+server-package-*/
+*.zip

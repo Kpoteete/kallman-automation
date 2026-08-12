@@ -7,6 +7,9 @@ using System.Reflection;
 using System.Text;
 using CsvHelper;
 using CsvHelper.Configuration;
+using Kallman.Automation.Core.Configuration;
+using Kallman.Automation.Core.Files;
+using Kallman.Automation.Core.Operations;
 using Ungerboeck.Api.Models.Authorization;
 using Ungerboeck.Api.Models.Search;
 using Ungerboeck.Api.Models.Subjects;
@@ -17,15 +20,9 @@ class Program
     private const string OrgCode = "10";
     private const string UngerboeckUri = "https://kallman.ungerboeck.com/prod";
 
-    private static readonly string ApiUserId =
-        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "";
-    private static readonly string Secret =
-        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "";
-    private static readonly string Key =
-        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "";
-
-    private const string OutputFolder =
-        @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
+    private static readonly string OutputFolder =
+        Environment.GetEnvironmentVariable("EXHIBITORS_OUTPUT_FOLDER")
+        ?? @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
 
     private static readonly string OutputFilePath = Path.Combine(OutputFolder, "Exhibitor_Pull.csv");
     private static readonly string RunStatePath = Path.Combine(OutputFolder, "Exhibitor_Pull.last_run.txt");
@@ -276,6 +273,8 @@ class Program
     static int Main()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var summary = new AutomationRunSummary { Automation = "ExhibitorsPull" };
+        string summaryPath = Path.Combine(OutputFolder, "logs", $"exhibitors-{summary.RunId}.json");
 
         try
         {
@@ -294,6 +293,7 @@ class Program
             Console.WriteLine($"-> Existing CSV rows loaded: {existingRows.Count:N0}");
 
             var changedRows = PullChangedExhibitors(client, effectiveSince);
+            summary.RecordsRead = changedRows.Count;
             Console.WriteLine($"-> Changed/new exhibitors returned: {changedRows.Count:N0}");
 
             int inserted = 0;
@@ -321,10 +321,14 @@ class Program
                 .OrderBy(r => ToInt(GetValue(r, "ExhibitorID")))
                 .ToList();
 
-            string tempOutputPath = OutputFilePath + ".tmp";
+            string tempOutputPath = AtomicFilePublisher.CreateTemporaryPath(OutputFilePath);
             WriteCsv(tempOutputPath, finalRows, DesiredColumns);
-            File.Move(tempOutputPath, OutputFilePath, overwrite: true);
+            AtomicFilePublisher.Publish(tempOutputPath, OutputFilePath, OutputFilePath + ".bak");
             WriteRunState(RunStatePath, now);
+            summary.RecordsWritten = finalRows.Count;
+            summary.CheckpointAdvanced = true;
+            summary.Complete("Succeeded");
+            summary.WriteJson(summaryPath);
 
             Console.WriteLine($"-> Inserted rows: {inserted:N0}");
             Console.WriteLine($"-> Updated rows: {updated:N0}");
@@ -335,6 +339,9 @@ class Program
         }
         catch (Exception ex)
         {
+            summary.Errors++;
+            summary.Complete("Failed", ex.Message);
+            summary.WriteJson(summaryPath);
             Console.Error.WriteLine("FATAL:");
             Console.Error.WriteLine(ex.ToString());
             return 1;
@@ -343,14 +350,12 @@ class Program
 
     private static ApiClient BuildClient()
     {
-        if (string.IsNullOrWhiteSpace(ApiUserId) || string.IsNullOrWhiteSpace(Secret) || string.IsNullOrWhiteSpace(Key))
-            throw new InvalidOperationException(
-                "MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_KEY must be set in the environment.");
+        MomentusCredentials credentials = MomentusCredentials.FromEnvironment();
         var auth = new Jwt
         {
-            APIUserID = ApiUserId,
-            Secret = Secret,
-            Key = Key,
+            APIUserID = credentials.ApiUserId,
+            Secret = credentials.Secret,
+            Key = credentials.Key,
             UngerboeckURI = UngerboeckUri,
             AutoRefresh = new AutoRefresh()
         };

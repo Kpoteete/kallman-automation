@@ -1,0 +1,10 @@
+bin/
+obj/
+outputs/
+*.user
+*.suo
+*.xlsx
+
+# Local secrets. Keep appsettings.example.json as the shareable template.
+src/StaleMomentusAccountReport/appsettings.json
+src/StaleMomentusAccountReport/appsettings.local.json

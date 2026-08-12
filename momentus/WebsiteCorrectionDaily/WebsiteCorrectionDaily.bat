@@ -1,3 +1,4 @@
 @echo off
-cd /d "C:\Automations\Production\kallman-automation\momentus\WebsiteCorrectionDaily\Program.cs"
-dotnet run
+cd /d "%~dp0"
+dotnet run --project WebsiteCorrectionDaily.csproj
+exit /b %ERRORLEVEL%

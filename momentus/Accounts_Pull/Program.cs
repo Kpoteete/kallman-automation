@@ -10,6 +10,9 @@ using Ungerboeck.Api.Models.Authorization;
 using Ungerboeck.Api.Models.Search;
 using Ungerboeck.Api.Models.Subjects;
 using SearchOptions = Ungerboeck.Api.Models.Options.Search;
+using Kallman.Automation.Core.Configuration;
+using Kallman.Automation.Core.Files;
+using Kallman.Automation.Core.Operations;
 
 class Program
 {
@@ -17,17 +20,9 @@ class Program
     private const string UngerboeckUri = "https://kallman.ungerboeck.com/prod";
     private const string OrgCode = "10";
 
-    private static readonly string ApiUserId =
-        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "";
-
-    private static readonly string Secret =
-        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "";
-
-    private static readonly string Key =
-        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "";
-
-    private const string OutputFolder =
-        @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
+    private static readonly string OutputFolder =
+        Environment.GetEnvironmentVariable("ACCOUNTS_OUTPUT_FOLDER")
+        ?? @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
 
     private static readonly string OutputPath =
         Path.Combine(OutputFolder, "Accounts_Pull.xlsx");
@@ -43,18 +38,13 @@ class Program
 
     static int Main()
     {
+        var summary = new AutomationRunSummary { Automation = "AccountsPull" };
+        string summaryPath = Path.Combine(OutputFolder, "logs", $"accounts-{summary.RunId}.json");
         try
         {
             Console.WriteLine("Initializing Momentus API Client...");
             Console.WriteLine("Accounts Pull Version: FULL REBUILD - NO LOWEST-CODE SEARCH");
             Console.WriteLine();
-
-            if (string.IsNullOrWhiteSpace(Secret) || string.IsNullOrWhiteSpace(Key))
-            {
-                Console.WriteLine("ERROR: API Secret/Key are missing.");
-                Console.WriteLine("Set MOMENTUS_SECRET and MOMENTUS_KEY environment variables before running.");
-                return 1;
-            }
 
             Directory.CreateDirectory(OutputFolder);
 
@@ -88,11 +78,15 @@ class Program
             Console.WriteLine($"Total records pulled before de-dupe: {allAccounts.Count:N0}");
 
             allAccounts = DeDupeByAccountCode(allAccounts);
+            summary.RecordsRead = allAccounts.Count;
 
             Console.WriteLine($"Total records after de-dupe:        {allAccounts.Count:N0}");
             Console.WriteLine($"Writing replacement Excel file:     {OutputPath}");
 
             WriteReplacementAccountsExcel(OutputPath, allAccounts, pullDate);
+            summary.RecordsWritten = allAccounts.Count;
+            summary.Complete("Succeeded");
+            summary.WriteJson(summaryPath);
 
             Console.WriteLine();
             Console.WriteLine("================================");
@@ -105,8 +99,11 @@ class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine("ERROR");
-            Console.WriteLine(ex);
+            summary.Errors++;
+            summary.Complete("Failed", ex.Message);
+            summary.WriteJson(summaryPath);
+            Console.Error.WriteLine("ERROR");
+            Console.Error.WriteLine(ex);
             return 1;
         }
     }
@@ -324,10 +321,7 @@ class Program
             workbook.SaveAs(tempPath);
         }
 
-        if (File.Exists(outputPath))
-            File.Delete(outputPath);
-
-        File.Move(tempPath, outputPath);
+        AtomicFilePublisher.Publish(tempPath, outputPath, outputPath + ".bak");
 
         Console.WriteLine($"Replacement Excel workbook saved: {outputPath}");
     }
@@ -527,11 +521,12 @@ class Program
 
     private static ApiClient BuildClient()
     {
+        MomentusCredentials credentials = MomentusCredentials.FromEnvironment();
         var auth = new Jwt
         {
-            APIUserID = ApiUserId,
-            Secret = Secret,
-            Key = Key,
+            APIUserID = credentials.ApiUserId,
+            Secret = credentials.Secret,
+            Key = credentials.Key,
             UngerboeckURI = UngerboeckUri,
             AutoRefresh = new AutoRefresh()
         };
