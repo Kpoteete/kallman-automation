@@ -13,18 +13,17 @@ using CsvHelper.Configuration;
 using Ungerboeck.Api.Models.Authorization;
 using Ungerboeck.Api.Models.Subjects;
 using Ungerboeck.Api.Sdk;
+using Kallman.Automation.Core.Configuration;
+using Kallman.Automation.Core.Files;
 
 class Program
 {
     private const string OrgCode = "10";
     private const string UngerboeckUri = "https://kallman.ungerboeck.com/prod";
 
-    private const string DefaultApiUserId = "";
-    private const string DefaultSecret = "";
-    private const string DefaultKey = "";
-
-    private const string OutputFolder =
-        @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
+    private static readonly string OutputFolder =
+        Environment.GetEnvironmentVariable("SERVICE_ORDER_ITEMS_OUTPUT_FOLDER")
+        ?? @"C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents";
 
     private static readonly string OutputFilePath = Path.Combine(OutputFolder, "ServiceOrderItems_Pull.csv");
     private static readonly string TempOutputFilePath = Path.Combine(OutputFolder, "ServiceOrderItems_Pull.tmp.csv");
@@ -304,7 +303,7 @@ class Program
 
             WriteCsv(TempOutputFilePath, finalRows, DesiredColumns);
 
-            File.Move(TempOutputFilePath, OutputFilePath, overwrite: true);
+            AtomicFilePublisher.Publish(TempOutputFilePath, OutputFilePath, OutputFilePath + ".bak");
 
             Console.WriteLine($"-> Final CSV rows: {finalRows.Count:N0}");
             Console.WriteLine($"-> CSV saved: {OutputFilePath}");
@@ -320,19 +319,13 @@ class Program
 
     private static ApiClient BuildClient()
     {
-        string apiUserId = GetEnvironmentVariableOrDefault("MOMENTUS_APIUSER", DefaultApiUserId);
-        string secret = GetEnvironmentVariableOrDefault("MOMENTUS_SECRET", DefaultSecret);
-        string key = GetEnvironmentVariableOrDefault("MOMENTUS_KEY", DefaultKey);
-
-        if (string.IsNullOrWhiteSpace(apiUserId) || string.IsNullOrWhiteSpace(secret) || string.IsNullOrWhiteSpace(key))
-            throw new InvalidOperationException(
-                "MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_KEY must be set in the environment.");
+        MomentusCredentials credentials = MomentusCredentials.FromEnvironment();
 
         var auth = new Jwt
         {
-            APIUserID = apiUserId,
-            Secret = secret,
-            Key = key,
+            APIUserID = credentials.ApiUserId,
+            Secret = credentials.Secret,
+            Key = credentials.Key,
             UngerboeckURI = UngerboeckUri,
             AutoRefresh = new AutoRefresh()
         };

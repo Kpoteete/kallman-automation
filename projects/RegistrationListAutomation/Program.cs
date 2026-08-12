@@ -36,6 +36,7 @@ class Program
     private const string InstructionsSheetName = "Instructions";
     private const string PullDatePickerSheetName = "Date Picker";
     private const string CurrentRegistrationSheetName = "Current Registration List";
+    private const string SofexSheetName = "SOFEX";
     private const string PreviousRegistrationSheetName = "Last Registration List";
     private const string PullDataSheetName = "data";
     private const string NewSinceSelectedDateSheetName = "New Since Date";
@@ -56,6 +57,8 @@ class Program
     private const string FieldMapTableName = "tblFieldMap";
     private const string PullDateTimeColumnName = "PullDateTime";
     private const string PullCompareKeyColumnName = "PullCompareKey";
+    private const string SofexShellHeader = "Shell of Bare";
+    private const string SofexRepresentativeHeader = "Representative";
     private const string DefaultStatusCriteria = "All registered statuses";
     private static readonly List<string> StatusCriteriaOptions = new()
     {
@@ -361,10 +364,10 @@ class Program
 
         Console.WriteLine($"Temp run folder: {tempRunFolder}");
 
-        string eventsPath = CopyFileForReading(sourceEventsPath, tempRunFolder);
-        string exhibitorsPath = CopyFileForReading(sourceExhibitorsPath, tempRunFolder);
-        string accountsPath = CopyFileForReading(sourceAccountsPath, tempRunFolder);
-        string exhibitorCategoriesPath = CopyFileForReading(sourceExhibitorCategoriesPath, tempRunFolder);
+        string eventsPath = SourceFileReader.CopyStableFile(sourceEventsPath, tempRunFolder);
+        string exhibitorsPath = SourceFileReader.CopyStableFile(sourceExhibitorsPath, tempRunFolder);
+        string accountsPath = SourceFileReader.CopyStableFile(sourceAccountsPath, tempRunFolder);
+        string exhibitorCategoriesPath = SourceFileReader.CopyStableFile(sourceExhibitorCategoriesPath, tempRunFolder);
 
         DateTime today = runStartedAt.Date;
         DateTime maxDate = today.AddMonths(MonthsAhead);
@@ -448,10 +451,15 @@ class Program
 
                 string savedStatusCriteria = ReadSavedStatusCriteria(outputPath);
                 List<Dictionary<string, string>> existingPullRows = ReadExistingPullRowsFromWorkbook(outputPath);
+                Dictionary<string, Dictionary<string, string>> existingSofexManualValues =
+                    ReadExistingSofexManualValues(outputPath);
                 List<Dictionary<string, string>> filteredCurrentFullRows = FilterRowsByStatusCriteria(currentFullRows, savedStatusCriteria);
-                List<Dictionary<string, string>> filteredExistingPullRows = FilterRowsByStatusCriteria(existingPullRows, savedStatusCriteria);
-                List<Dictionary<string, string>> currentPullRows = BuildPullRows(filteredCurrentFullRows, runStartedAt);
-                List<Dictionary<string, string>> allPullRows = filteredExistingPullRows
+                // Keep the data sheet as the unfiltered canonical history. Status
+                // criteria belong to the user-facing view and must never erase
+                // rows collected under an earlier selection.
+                List<Dictionary<string, string>> currentPullRows = BuildPullRows(currentFullRows, runStartedAt);
+                List<Dictionary<string, string>> currentViewRows = BuildPullRows(filteredCurrentFullRows, runStartedAt);
+                List<Dictionary<string, string>> allPullRows = existingPullRows
                     .Concat(currentPullRows)
                     .ToList();
 
@@ -464,7 +472,13 @@ class Program
 
                 Stopwatch workbookStopwatch = Stopwatch.StartNew();
 
-                CreateRegistrationListWorkbook(outputPath, currentPullRows, allPullRows, runStartedAt, savedStatusCriteria);
+                CreateRegistrationListWorkbook(
+                    outputPath,
+                    currentViewRows,
+                    allPullRows,
+                    runStartedAt,
+                    savedStatusCriteria,
+                    existingSofexManualValues);
 
                 workbookStopwatch.Stop();
                 Console.WriteLine($"Workbook render/save time: {workbookStopwatch.Elapsed:mm\\:ss}");
@@ -1191,6 +1205,70 @@ class Program
         return rows;
     }
 
+    private static Dictionary<string, Dictionary<string, string>> ReadExistingSofexManualValues(
+        string workbookPath)
+    {
+        Dictionary<string, Dictionary<string, string>> valuesByRowKey =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        if (!File.Exists(workbookPath))
+            return valuesByRowKey;
+
+        using FileStream fileStream = new(
+            workbookPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete
+        );
+
+        using XLWorkbook workbook = new(fileStream);
+        IXLWorksheet? ws = workbook.Worksheets
+            .FirstOrDefault(sheet => sheet.Name.Equals(SofexSheetName, StringComparison.OrdinalIgnoreCase));
+
+        if (ws == null)
+            return valuesByRowKey;
+
+        IXLRange? usedRange = ws.RangeUsed();
+        if (usedRange == null)
+            return valuesByRowKey;
+
+        int headerRow = usedRange.RangeAddress.FirstAddress.RowNumber;
+        int lastRow = usedRange.RangeAddress.LastAddress.RowNumber;
+        int firstCol = usedRange.RangeAddress.FirstAddress.ColumnNumber;
+        int lastCol = usedRange.RangeAddress.LastAddress.ColumnNumber;
+
+        Dictionary<string, int> columnsByHeader = new(StringComparer.OrdinalIgnoreCase);
+        for (int col = firstCol; col <= lastCol; col++)
+        {
+            string header = ws.Cell(headerRow, col).GetFormattedString().Trim();
+            if (!string.IsNullOrWhiteSpace(header))
+                columnsByHeader[header] = col;
+        }
+
+        if (!columnsByHeader.TryGetValue("RowKey", out int rowKeyCol))
+            return valuesByRowKey;
+
+        columnsByHeader.TryGetValue(SofexShellHeader, out int shellCol);
+        columnsByHeader.TryGetValue(SofexRepresentativeHeader, out int representativeCol);
+
+        for (int row = headerRow + 1; row <= lastRow; row++)
+        {
+            string rowKey = ws.Cell(row, rowKeyCol).GetFormattedString().Trim();
+            if (string.IsNullOrWhiteSpace(rowKey))
+                continue;
+
+            valuesByRowKey[rowKey] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [SofexShellHeader] = shellCol > 0 ? ws.Cell(row, shellCol).GetFormattedString().Trim() : "",
+                [SofexRepresentativeHeader] = representativeCol > 0
+                    ? ws.Cell(row, representativeCol).GetFormattedString().Trim()
+                    : ""
+            };
+        }
+
+        return valuesByRowKey;
+    }
+
     private static string ReadSavedStatusCriteria(string workbookPath)
     {
         if (!File.Exists(workbookPath))
@@ -1439,7 +1517,8 @@ class Program
         List<Dictionary<string, string>> currentPullRows,
         List<Dictionary<string, string>> allPullRows,
         DateTime runStartedAt,
-        string savedStatusCriteria)
+        string savedStatusCriteria,
+        Dictionary<string, Dictionary<string, string>> existingSofexManualValues)
     {
         using XLWorkbook workbook = new();
         workbook.CalculateMode = XLCalculateMode.Auto;
@@ -1460,10 +1539,17 @@ class Program
             defaultPreviousPullDateTime
         );
         Console.WriteLine($"  Added Current Registration List sheet with {currentPullRows.Count:N0} rows.");
+        AddSofexWorksheet(
+            workbook,
+            currentPullRows,
+            allPullRows.Count,
+            existingSofexManualValues);
+        Console.WriteLine($"  Added SOFEX sheet with {currentPullRows.Count:N0} rows.");
 
         workbook.Worksheet(InstructionsSheetName).Position = 1;
         workbook.Worksheet(PullDatePickerSheetName).Position = 2;
         workbook.Worksheet(CurrentRegistrationSheetName).Position = 3;
+        workbook.Worksheet(SofexSheetName).Position = 4;
 
         SaveWorkbookWithRetry(workbook, outputPath);
     }
@@ -1485,9 +1571,10 @@ class Program
             "3. Pick the Registered status criteria for this show. Default is All registered statuses. Save the workbook. The next automation run rebuilds this show using that saved setting.",
             "4. Open Current Registration List. The first columns show Change Status and Change Details.",
             "5. Use the filter arrows on Change Status to focus on New or Changed rows.",
-            "6. To send one sheet somewhere else without formulas: right-click the sheet tab, choose Move or Copy, choose (new book), check Create a copy, then click OK.",
-            "7. In the new workbook, press Ctrl+A, copy, then use Paste Values. Save that new workbook wherever it is needed.",
-            "8. Do not edit the data sheet unless you are intentionally changing the pull history."
+            $"6. Use the SOFEX sheet for the focused SOFEX export. Values entered in {SofexShellHeader} and {SofexRepresentativeHeader} are retained on the next automation run.",
+            "7. To send one sheet somewhere else without formulas: right-click the sheet tab, choose Move or Copy, choose (new book), check Create a copy, then click OK.",
+            "8. In the new workbook, press Ctrl+A, copy, then use Paste Values. Save that new workbook wherever it is needed.",
+            "9. Do not edit the data sheet unless you are intentionally changing the pull history."
         };
 
         for (int i = 0; i < instructions.Count; i++)
@@ -1705,6 +1792,181 @@ class Program
         ws.Columns(priorExistsCol, priorValueLastCol).Hide();
 
         ApplyRegistrationListColumnWidths(ws, firstSourceCol, changeStatusCol, changeDetailsCol);
+    }
+
+    private static void AddSofexWorksheet(
+        XLWorkbook workbook,
+        List<Dictionary<string, string>> currentPullRows,
+        int allPullRowCount,
+        Dictionary<string, Dictionary<string, string>> existingManualValues)
+    {
+        IXLWorksheet ws = workbook.Worksheets.Add(SofexSheetName);
+
+        string[] visibleHeaders =
+        {
+            "Exhibitor Name",
+            "Point of contact name",
+            "PoC Email",
+            "PoC Mobile/Tel.",
+            "Booth Number",
+            "Area",
+            SofexShellHeader,
+            SofexRepresentativeHeader,
+            "Change Status",
+            "Change Details"
+        };
+
+        string[] comparedDataColumns =
+        {
+            "CompanyBannerName",
+            "MainContactName",
+            "MainContactEmail",
+            "MainContactMobile",
+            "BoothNumber",
+            "OrderedArea"
+        };
+
+        int headerRow = 1;
+        int firstDataRow = 2;
+        int lastVisibleCol = visibleHeaders.Length;
+        int rowKeyCol = lastVisibleCol + 1;
+        int priorExistsCol = rowKeyCol + 1;
+        int changedCountCol = priorExistsCol + 1;
+        int priorValueFirstCol = changedCountCol + 1;
+        int priorValueLastCol = priorValueFirstCol + comparedDataColumns.Length - 1;
+        int dataRowCount = Math.Max(currentPullRows.Count, 1);
+        int lastDataRow = firstDataRow + dataRowCount - 1;
+        int dataFirstRow = 2;
+        int dataLastRow = Math.Max(allPullRowCount + 1, dataFirstRow);
+        string dataCompareKeyRange = BuildDataSheetRange(PullCompareKeyColumnName, dataFirstRow, dataLastRow);
+
+        for (int i = 0; i < visibleHeaders.Length; i++)
+            ws.Cell(headerRow, i + 1).Value = visibleHeaders[i];
+
+        ws.Cell(headerRow, rowKeyCol).Value = "RowKey";
+        ws.Cell(headerRow, priorExistsCol).Value = "Helper Prior Exists";
+        ws.Cell(headerRow, changedCountCol).Value = "Helper Changed Count";
+        for (int i = 0; i < comparedDataColumns.Length; i++)
+            ws.Cell(headerRow, priorValueFirstCol + i).Value = $"Helper Prior {visibleHeaders[i]}";
+
+        for (int index = 0; index < currentPullRows.Count; index++)
+        {
+            int row = firstDataRow + index;
+            Dictionary<string, string> sourceRow = currentPullRows[index];
+            string rowKey = GetDictionaryValue(sourceRow, "RowKey");
+            string contactName = string.Join(
+                " ",
+                new[]
+                {
+                    GetDictionaryValue(sourceRow, "MainContactFirstName"),
+                    GetDictionaryValue(sourceRow, "MainContactLastName")
+                }.Where(value => !string.IsNullOrWhiteSpace(value))).Trim();
+
+            ws.Cell(row, 1).Value = GetDictionaryValue(sourceRow, "CompanyBannerName");
+            ws.Cell(row, 2).Value = contactName;
+            ws.Cell(row, 3).Value = GetDictionaryValue(sourceRow, "MainContactEmail");
+            ws.Cell(row, 4).Value = GetDictionaryValue(sourceRow, "MainContactMobile");
+            ws.Cell(row, 5).Value = GetDictionaryValue(sourceRow, "BoothNumber");
+            SetWorksheetCellValue(ws.Cell(row, 6), "OrderedArea", GetDictionaryValue(sourceRow, "OrderedArea"));
+            ws.Cell(row, rowKeyCol).Value = rowKey;
+
+            if (existingManualValues.TryGetValue(rowKey, out Dictionary<string, string>? manualValues))
+            {
+                ws.Cell(row, 7).Value = GetDictionaryValue(manualValues, SofexShellHeader);
+                ws.Cell(row, 8).Value = GetDictionaryValue(manualValues, SofexRepresentativeHeader);
+            }
+        }
+
+        string[] detailLabels = visibleHeaders.Take(comparedDataColumns.Length).ToArray();
+        for (int row = firstDataRow; row <= lastDataRow; row++)
+        {
+            string rowKeyRef = $"${IndexToColumnLetter(rowKeyCol)}{row}";
+            string priorExistsRef = $"{IndexToColumnLetter(priorExistsCol)}{row}";
+            string changedCountRef = $"{IndexToColumnLetter(changedCountCol)}{row}";
+            string compareKeyExpression = $"{rowKeyRef}&\"|\"&TEXT({PullDatePickerComparePullDateTimeCellReference},\"yyyy-mm-dd hh:mm:ss\")";
+
+            ws.Cell(row, priorExistsCol).FormulaA1 =
+                $"IF({rowKeyRef}=\"\",FALSE,ISNUMBER(MATCH({compareKeyExpression},{dataCompareKeyRange},0)))";
+
+            string exhibitorNameRange = BuildDataSheetRange("CompanyBannerName", dataFirstRow, dataLastRow);
+            ws.Cell(row, priorValueFirstCol).FormulaA1 =
+                $"IF({priorExistsRef},IFERROR(INDEX({exhibitorNameRange},MATCH({compareKeyExpression},{dataCompareKeyRange},0))&\"\",\"\"),\"\")";
+
+            string firstNameRange = BuildDataSheetRange("MainContactFirstName", dataFirstRow, dataLastRow);
+            string lastNameRange = BuildDataSheetRange("MainContactLastName", dataFirstRow, dataLastRow);
+            ws.Cell(row, priorValueFirstCol + 1).FormulaA1 =
+                $"IF({priorExistsRef},TRIM(IFERROR(INDEX({firstNameRange},MATCH({compareKeyExpression},{dataCompareKeyRange},0))&\"\",\"\")&\" \"&IFERROR(INDEX({lastNameRange},MATCH({compareKeyExpression},{dataCompareKeyRange},0))&\"\",\"\")),\"\")";
+
+            string[] directPriorColumns =
+            {
+                "MainContactEmail",
+                "MainContactMobile",
+                "BoothNumber",
+                "OrderedArea"
+            };
+
+            for (int i = 0; i < directPriorColumns.Length; i++)
+            {
+                string priorRange = BuildDataSheetRange(directPriorColumns[i], dataFirstRow, dataLastRow);
+                ws.Cell(row, priorValueFirstCol + 2 + i).FormulaA1 =
+                    $"IF({priorExistsRef},IFERROR(INDEX({priorRange},MATCH({compareKeyExpression},{dataCompareKeyRange},0))&\"\",\"\"),\"\")";
+            }
+
+            List<string> comparisons = new();
+            List<string> detailParts = new();
+            for (int i = 0; i < comparedDataColumns.Length; i++)
+            {
+                string currentCell = $"{IndexToColumnLetter(i + 1)}{row}";
+                string priorCell = $"{IndexToColumnLetter(priorValueFirstCol + i)}{row}";
+                comparisons.Add($"N({currentCell}&\"\"<>{priorCell}&\"\")");
+
+                string label = EscapeExcelString(detailLabels[i]);
+                detailParts.Add(
+                    $"IF({currentCell}&\"\"<>{priorCell}&\"\",\"{label}: \"&IF({priorCell}&\"\"=\"\",\"(blank)\",{priorCell})&\" -> \"&IF({currentCell}&\"\"=\"\",\"(blank)\",{currentCell})&\"; \",\"\")");
+            }
+
+            ws.Cell(row, changedCountCol).FormulaA1 =
+                $"IF({priorExistsRef},SUM({string.Join(",", comparisons)}),0)";
+            ws.Cell(row, 9).FormulaA1 =
+                $"IF({rowKeyRef}=\"\",\"\",IF(NOT({priorExistsRef}),\"New\",IF({changedCountRef}>0,\"Changed\",\"\")))";
+            ws.Cell(row, 10).FormulaA1 =
+                $"IF({rowKeyRef}=\"\",\"\",IF(NOT({priorExistsRef}),\"New exhibitor\",IF({changedCountRef}=0,\"\",{string.Join("&", detailParts)})))";
+        }
+
+        ws.Range(headerRow, 1, headerRow, lastVisibleCol).Style.Font.Bold = true;
+        ws.Range(headerRow, 1, headerRow, lastVisibleCol).Style.Fill.BackgroundColor = KallmanBlue;
+        ws.Range(headerRow, 1, headerRow, lastVisibleCol).Style.Font.FontColor = KallmanWhite;
+        ws.Range(headerRow, 1, headerRow, lastVisibleCol).Style.Alignment.WrapText = true;
+        ws.Cell(headerRow, 9).Style.Fill.BackgroundColor = KallmanRed;
+
+        ws.Range(firstDataRow, 1, lastDataRow, lastVisibleCol).Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
+        ws.Range(firstDataRow, 1, lastDataRow, lastVisibleCol).Style.Border.InsideBorder = XLBorderStyleValues.Hair;
+        ws.Range(firstDataRow, 1, lastDataRow, lastVisibleCol).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        ws.Range(firstDataRow, 7, lastDataRow, 8).Style.Fill.BackgroundColor = KallmanLightSilver;
+        ws.Range(firstDataRow, 10, lastDataRow, 10).Style.Alignment.WrapText = true;
+
+        string firstRowKeyRef = $"${IndexToColumnLetter(rowKeyCol)}{firstDataRow}";
+        string firstPriorExistsRef = $"${IndexToColumnLetter(priorExistsCol)}{firstDataRow}";
+        ws.Range(firstDataRow, 1, lastDataRow, lastVisibleCol)
+            .AddConditionalFormat()
+            .WhenIsTrue($"AND({firstRowKeyRef}<>\"\",{firstPriorExistsRef}=FALSE)")
+            .Fill.SetBackgroundColor(XLColor.FromArgb(226, 239, 218));
+
+        string firstPriorRange =
+            $"${IndexToColumnLetter(priorValueFirstCol)}{firstDataRow}:${IndexToColumnLetter(priorValueLastCol)}{firstDataRow}";
+        ws.Range(firstDataRow, 1, lastDataRow, comparedDataColumns.Length)
+            .AddConditionalFormat()
+            .WhenIsTrue(
+                $"AND({firstRowKeyRef}<>\"\",{firstPriorExistsRef}=TRUE,A{firstDataRow}&\"\"<>INDEX({firstPriorRange},1,COLUMN()-COLUMN($A{firstDataRow})+1)&\"\")")
+            .Fill.SetBackgroundColor(KallmanLightRed);
+
+        ws.Range(headerRow, 1, lastDataRow, lastVisibleCol).SetAutoFilter();
+        ws.Columns(rowKeyCol, priorValueLastCol).Hide();
+        ws.SheetView.FreezeRows(1);
+
+        double[] widths = { 28, 24, 30, 20, 16, 12, 18, 22, 16, 60 };
+        for (int i = 0; i < widths.Length; i++)
+            ws.Column(i + 1).Width = widths[i];
     }
 
     private static string BuildDataSheetRange(string internalHeader, int firstRow, int lastRow)
@@ -4093,71 +4355,6 @@ class Program
             throw new FileNotFoundException($"Required file not found: {path}");
     }
 
-    private static string CopyFileForReading(string sourcePath, string tempRunFolder)
-    {
-        string destinationPath = Path.Combine(tempRunFolder, Path.GetFileName(sourcePath));
-
-        const int maxAttempts = 10;
-        const int delayMilliseconds = 3000;
-
-        for (int attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            try
-            {
-                FileInfo before = new(sourcePath);
-                long sourceLengthBefore = before.Length;
-                DateTime sourceLastWriteBefore = before.LastWriteTimeUtc;
-
-                using (FileStream sourceStream = new(
-                    sourcePath,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.ReadWrite | FileShare.Delete))
-                using (FileStream destinationStream = new(
-                    destinationPath,
-                    FileMode.Create,
-                    FileAccess.Write,
-                    FileShare.None))
-                {
-                    sourceStream.CopyTo(destinationStream);
-                }
-
-                FileInfo after = new(sourcePath);
-                FileInfo copied = new(destinationPath);
-
-                bool stable = sourceLengthBefore == after.Length
-                    && sourceLastWriteBefore == after.LastWriteTimeUtc
-                    && copied.Length == sourceLengthBefore;
-
-                if (!stable)
-                {
-                    throw new IOException($"Source file changed while being copied: {sourcePath}");
-                }
-
-                Console.WriteLine($"Copied stable source file for reading: {Path.GetFileName(sourcePath)}");
-
-                return destinationPath;
-            }
-            catch (IOException ex)
-            {
-                Console.WriteLine($"File busy or changing: {Path.GetFileName(sourcePath)}. Attempt {attempt} of {maxAttempts}.");
-
-                if (attempt == maxAttempts)
-                {
-                    throw new IOException(
-                        $"Could not copy a stable file after {maxAttempts} attempts. File may be locked or actively changing: {sourcePath}",
-                        ex
-                    );
-                }
-
-                Thread.Sleep(delayMilliseconds);
-            }
-        }
-
-        throw new IOException($"Could not copy file: {sourcePath}");
-    }
-
-
     private static string MakeSafeFileName(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -4190,27 +4387,4 @@ class Program
 
         return columnName;
     }
-}
-
-// ============================================================
-// MODELS
-// ============================================================
-
-class EventInfo
-{
-    public string EventId { get; set; } = "";
-    public string EventName { get; set; } = "";
-    public DateTime StartDate { get; set; }
-}
-
-class ComparisonResult
-{
-    public List<Dictionary<string, string>> NewRows { get; set; } = new();
-    public List<Dictionary<string, string>> ChangedRows { get; set; } = new();
-}
-
-class PullRunInfo
-{
-    public DateTime PullDateTime { get; set; }
-    public int RowCount { get; set; }
 }

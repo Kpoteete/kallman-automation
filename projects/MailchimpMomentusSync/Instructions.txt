@@ -1,0 +1,63 @@
+MAILCHIMP TO MOMENTUS SYNC
+=========================
+
+MONTHLY USE
+
+1. Double-click "Run Mailchimp Sync.cmd".
+2. Choose the Mailchimp CSV file.
+3. Review the event number and usable-row count shown on screen.
+4. Type RUN only if they are correct.
+5. Wait for "SYNC COMPLETED." The audit/results folder opens automatically.
+
+The original CSV is never moved or changed.
+
+
+FIRST-TIME SETUP
+
+Double-click "Setup Mailchimp Sync.cmd" and enter the dedicated Momentus API
+User ID, Secret, and Key. Secret and Key input is hidden. The saved credentials
+are encrypted for your Windows account on this computer.
+
+If you do not have the dedicated API credentials, stop and ask the automation
+owner. Do not use another person's credentials.
+
+
+REQUIRED CSV LAYOUT
+
+The export must have a header row and these columns in this exact order:
+
+  A  Event ID
+  B  Campaign Type
+  C  Salesperson
+  D  Salesperson Account Code
+  E  Click Type
+  F  Open Type
+  G  Email
+  H  Clicks
+  I  Opens
+  J  First Name
+  K  Last Name
+  L  Contact Account Code
+
+One CSV file may contain only one Event ID.
+
+
+IMPORTANT
+
+- This is a LIVE update. It can add Momentus exhibitors, activities, and notes.
+- If the screen says "SYNC NEEDS ATTENTION", do not immediately rerun it.
+  Give the displayed run-folder path to the automation owner for review.
+- Run history is stored under:
+  %LOCALAPPDATA%\Kallman\MailchimpMomentusSync\runs
+- To replace expired credentials, run "Setup Mailchimp Sync.cmd" again.
+
+
+FOR THE AUTOMATION OWNER
+
+Run Build-Release.ps1 to create the self-contained Windows package:
+
+  powershell -ExecutionPolicy Bypass -File .\Build-Release.ps1
+
+The ZIP is written to:
+
+  C:\kwi-automations\artifacts\MailchimpMomentusSync\

@@ -1,4 +1,5 @@
 @echo off
-cd /d C:\Automations\Production\kallman-automation\projects\RegistrationListAutomation
-echo Reg list...
+cd /d "%~dp0"
+echo Starting Registration List Automation...
 dotnet run
+exit /b %ERRORLEVEL%

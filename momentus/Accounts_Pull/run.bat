@@ -1,4 +1,5 @@
 @echo off
-cd /d "C:\Automations\Production\kallman-automation\momentus\Accounts_Pull"
+cd /d "%~dp0"
 echo Starting Accounts Pull...
-dotnet run
+dotnet run --project Accounts_Pull.csproj
+exit /b %ERRORLEVEL%

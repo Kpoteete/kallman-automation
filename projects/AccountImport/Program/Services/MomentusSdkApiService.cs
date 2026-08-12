@@ -261,8 +261,7 @@ public sealed class MomentusSdkApiService : IMomentusApiService
                 return ApiWriteResult.Failed("Cannot update existing account because AccountCode is blank.");
             }
 
-            object endpoint = GetEndpoint("Accounts");
-            object? existing = await InvokeEndpointAsync(endpoint, "GetAsync", "Get", new object?[] { _config.OrgCode, cleanAccountCode }, cancellationToken)
+            object? existing = await GetAccountByCodeAsync(cleanAccountCode, cancellationToken)
                 .ConfigureAwait(false);
 
             if (existing is null)
@@ -332,6 +331,7 @@ public sealed class MomentusSdkApiService : IMomentusApiService
                     "DRY_RUN: would fill blank existing organization account fields: " + string.Join(", ", updatedFields.Distinct(StringComparer.OrdinalIgnoreCase)));
             }
 
+            object endpoint = GetEndpoint("Accounts");
             await InvokeEndpointAsync(endpoint, "UpdateAsync", "Update", new object?[] { existing, null }, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -506,7 +506,7 @@ public sealed class MomentusSdkApiService : IMomentusApiService
             }
 
             object endpoint = GetEndpoint("Accounts");
-            object? existing = await InvokeEndpointAsync(endpoint, "GetAsync", "Get", new object?[] { _config.OrgCode, cleanAccountCode }, cancellationToken)
+            object? existing = await GetAccountByCodeAsync(cleanAccountCode, cancellationToken)
                 .ConfigureAwait(false);
 
             if (existing is null)
@@ -566,7 +566,7 @@ public sealed class MomentusSdkApiService : IMomentusApiService
             }
 
             object endpoint = GetEndpoint("Accounts");
-            object? existing = await InvokeEndpointAsync(endpoint, "GetAsync", "Get", new object?[] { _config.OrgCode, cleanAccountCode }, cancellationToken)
+            object? existing = await GetAccountByCodeAsync(cleanAccountCode, cancellationToken)
                 .ConfigureAwait(false);
 
             if (existing is not AllAccountsModel accountModel)
@@ -672,6 +672,12 @@ public sealed class MomentusSdkApiService : IMomentusApiService
                 continue;
             }
 
+            if (string.Equals(apiField, _fields.Country, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(apiField, "Country", StringComparison.OrdinalIgnoreCase))
+            {
+                value = _config.CleanCountryForMomentus(value);
+            }
+
             SetRequired(model, apiField, value);
         }
 
@@ -720,6 +726,18 @@ public sealed class MomentusSdkApiService : IMomentusApiService
         var candidates = await SearchAccountsAsync(odata, cancellationToken, maxResults: 5).ConfigureAwait(false);
 
         return candidates.Any(model =>
+            TextUtil.EqualsTrimmedIgnoreCase(GetString(model, _fields.AccountCode, "AccountCode", "Code"), cleanCode));
+    }
+
+    private async Task<object?> GetAccountByCodeAsync(string accountCode, CancellationToken cancellationToken)
+    {
+        string cleanCode = TextUtil.CleanKeyField(accountCode);
+        if (string.IsNullOrWhiteSpace(cleanCode)) return null;
+
+        string odata = $"{_fields.AccountCode} eq '{ODataString(cleanCode)}'";
+        var candidates = await SearchAccountsAsync(odata, cancellationToken, maxResults: 5).ConfigureAwait(false);
+
+        return candidates.FirstOrDefault(model =>
             TextUtil.EqualsTrimmedIgnoreCase(GetString(model, _fields.AccountCode, "AccountCode", "Code"), cleanCode));
     }
 
