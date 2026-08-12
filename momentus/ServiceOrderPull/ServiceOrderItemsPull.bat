@@ -1,3 +1,4 @@
 @echo off
-cd /d "C:\Automations\Production\kallman-automation\momentus\ServiceOrderPull\program.cs"
-dotnet run
+cd /d "%~dp0"
+dotnet run --project ServiceOrderPull.csproj
+exit /b %ERRORLEVEL%

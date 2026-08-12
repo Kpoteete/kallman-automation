@@ -1,0 +1,2 @@
+-r "projects/Automatic Duplicate Merge/requirements.txt"
+pytest==8.4.1
