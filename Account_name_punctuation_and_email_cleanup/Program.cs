@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -17,13 +17,13 @@ class Program
     private const string OrgCode = "10";
 
     private static readonly string ApiUserId =
-        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER") ?? "KYLEPAPI";
+        Environment.GetEnvironmentVariable("MOMENTUS_APIUSER")?.Trim() ?? "";
 
     private static readonly string Secret =
-        Environment.GetEnvironmentVariable("MOMENTUS_SECRET") ?? "8c247eb8-2342-452a-95c3-cf22bd1c6a56";
+        Environment.GetEnvironmentVariable("MOMENTUS_SECRET")?.Trim() ?? "";
 
     private static readonly string Key =
-        Environment.GetEnvironmentVariable("MOMENTUS_KEY") ?? "e2b97782-08d7-40f3-bdbc-fbef5095154c";
+        Environment.GetEnvironmentVariable("MOMENTUS_KEY")?.Trim() ?? "";
 
     private const string ChangedDateFieldName = "ChangedOn";
 
@@ -33,10 +33,15 @@ class Program
         {
             Console.WriteLine("Initializing Momentus API Client...");
 
-            if (Secret == "PASTE_SECRET_HERE" || Key == "PASTE_KEY_HERE")
+            if (string.IsNullOrWhiteSpace(ApiUserId) ||
+                string.IsNullOrWhiteSpace(Secret) ||
+                string.IsNullOrWhiteSpace(Key))
             {
-                Console.WriteLine("ERROR: API Secret/Key are missing.");
-                Console.WriteLine("Set MOMENTUS_SECRET and MOMENTUS_KEY environment variables, or paste them into Program.cs locally.");
+                Console.WriteLine("ERROR: Momentus API credentials are missing.");
+                Console.WriteLine("Required environment variables:");
+                Console.WriteLine("  MOMENTUS_APIUSER");
+                Console.WriteLine("  MOMENTUS_SECRET");
+                Console.WriteLine("  MOMENTUS_KEY");
                 return 1;
             }
 
@@ -240,14 +245,14 @@ class Program
         string cleaned = name.Trim();
 
         // Normalize smart quotes.
-        cleaned = cleaned.Replace("’", "'");
-        cleaned = cleaned.Replace("‘", "'");
-        cleaned = cleaned.Replace("“", "\"");
-        cleaned = cleaned.Replace("”", "\"");
+        cleaned = cleaned.Replace("\u2019", "'");
+        cleaned = cleaned.Replace("\u2018", "'");
+        cleaned = cleaned.Replace("\u201c", "\"");
+        cleaned = cleaned.Replace("\u201d", "\"");
 
         // Normalize long dashes.
-        cleaned = cleaned.Replace("–", "-");
-        cleaned = cleaned.Replace("—", "-");
+        cleaned = cleaned.Replace("\u2013", "-");
+        cleaned = cleaned.Replace("\u2014", "-");
 
         // Remove repeated spaces.
         cleaned = Regex.Replace(cleaned, @"\s{2,}", " ");
