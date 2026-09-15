@@ -2,6 +2,8 @@
 
 Internal Momentus data pulls, reviewed write workflows, reporting exports, and operational support tools.
 
+New to this repository or working with an AI agent? Start with [`AGENTS.md`](AGENTS.md) and the [AI navigation guide](docs/architecture/AI_NAVIGATION.md). The [repository inventory](docs/architecture/REPOSITORY_INVENTORY.md) lists the maintained workflows and their safety model.
+
 ## Main automations
 
 - Accounts, Exhibitors, Service Orders, and Service Order Items pulls

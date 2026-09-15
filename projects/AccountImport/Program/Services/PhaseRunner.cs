@@ -885,9 +885,9 @@ public sealed class PhaseRunner
         }
 
         Console.WriteLine();
-        Console.Write("Enter an affiliation/interest code to add to all accounts, created contacts, and duplicate contacts found in this run, or press Enter to skip: ");
-        string affiliationCode = TextUtil.CleanKeyField(Console.ReadLine());
-        if (string.IsNullOrWhiteSpace(affiliationCode))
+        Console.Write("Enter affiliation/interest code(s) to add to all accounts, created contacts, and duplicate contacts found in this run, or press Enter to skip. Separate multiple codes with commas or semicolons: ");
+        IReadOnlyList<string> affiliationCodes = ParseAffiliationCodes(Console.ReadLine());
+        if (affiliationCodes.Count == 0)
         {
             Console.WriteLine("No affiliation/interest code entered. Skipping affiliation step.");
             return;
@@ -915,8 +915,8 @@ public sealed class PhaseRunner
             return;
         }
 
-        Console.WriteLine($"Adding affiliation/interest code '{affiliationCode}' to {accountCodes.Count} account/contact record(s).");
-        int totalAffiliations = accountCodes.Count;
+        Console.WriteLine($"Adding affiliation/interest code(s) '{string.Join(", ", affiliationCodes)}' to {accountCodes.Count} account/contact record(s).");
+        int totalAffiliations = accountCodes.Count * affiliationCodes.Count;
         int processedAffiliations = 0;
         int affiliationStart = session.Summary.AffiliationsAdded;
         int affiliationFailureStart = session.Summary.AffiliationFailures;
@@ -924,59 +924,76 @@ public sealed class PhaseRunner
 
         foreach (string accountCode in accountCodes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            processedAffiliations++;
-
-            var pseudoRow = new ImportRow(
-                WorksheetRowNumber: 0,
-                SourceRowNumber: 0,
-                SourceFileName: "Session",
-                CompanyName: string.Empty,
-                AccountCode: accountCode,
-                MarketSegmentMajor: string.Empty,
-                Country: string.Empty,
-                WebsiteRootDomain: string.Empty,
-                ContactEmail: string.Empty);
-
-            if (_config.DryRun)
+            foreach (string affiliationCode in affiliationCodes)
             {
-                Log(pseudoRow, "Phase 4", "AddAffiliation", "Skipped", accountCode,
-                    $"DRY_RUN: would add affiliation/interest code '{affiliationCode}'.", string.Empty);
-                WriteProgress("Phase 4 affiliation update", processedAffiliations, totalAffiliations,
-                    $"affiliations +{session.Summary.AffiliationsAdded - affiliationStart}, failures +{session.Summary.AffiliationFailures - affiliationFailureStart}");
-                continue;
-            }
+                cancellationToken.ThrowIfCancellationRequested();
+                processedAffiliations++;
 
-            try
-            {
-                ApiWriteResult result = await _api.AddAccountAffiliationAsync(accountCode, affiliationCode, cancellationToken)
-                    .ConfigureAwait(false);
+                var pseudoRow = new ImportRow(
+                    WorksheetRowNumber: 0,
+                    SourceRowNumber: 0,
+                    SourceFileName: "Session",
+                    CompanyName: string.Empty,
+                    AccountCode: accountCode,
+                    MarketSegmentMajor: string.Empty,
+                    Country: string.Empty,
+                    WebsiteRootDomain: string.Empty,
+                    ContactEmail: string.Empty);
 
-                if (result.Success)
+                if (_config.DryRun)
                 {
-                    session.Summary.AffiliationsAdded++;
-                    Log(pseudoRow, "Phase 4", "AddAffiliation", "Success", accountCode, result.Message, string.Empty);
+                    Log(pseudoRow, "Phase 4", "AddAffiliation", "Skipped", accountCode,
+                        $"DRY_RUN: would add affiliation/interest code '{affiliationCode}'.", string.Empty);
+                    WriteProgress("Phase 4 affiliation update", processedAffiliations, totalAffiliations,
+                        $"affiliations +{session.Summary.AffiliationsAdded - affiliationStart}, failures +{session.Summary.AffiliationFailures - affiliationFailureStart}");
+                    continue;
                 }
-                else
+
+                try
+                {
+                    ApiWriteResult result = await _api.AddAccountAffiliationAsync(accountCode, affiliationCode, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (result.Skipped)
+                    {
+                        Log(pseudoRow, "Phase 4", "AddAffiliation", "Skipped", accountCode, result.Message, string.Empty);
+                    }
+                    else if (result.Success)
+                    {
+                        session.Summary.AffiliationsAdded++;
+                        Log(pseudoRow, "Phase 4", "AddAffiliation", "Success", accountCode, result.Message, string.Empty);
+                    }
+                    else
+                    {
+                        session.Summary.AffiliationFailures++;
+                        session.Summary.Failures++;
+                        Log(pseudoRow, "Phase 4", "AddAffiliation", "Failed", accountCode,
+                            result.Message, result.ErrorMessage ?? string.Empty);
+                    }
+
+                    WriteProgress("Phase 4 affiliation update", processedAffiliations, totalAffiliations,
+                        $"affiliations +{session.Summary.AffiliationsAdded - affiliationStart}, failures +{session.Summary.AffiliationFailures - affiliationFailureStart}");
+                }
+                catch (Exception ex)
                 {
                     session.Summary.AffiliationFailures++;
                     session.Summary.Failures++;
-                    Log(pseudoRow, "Phase 4", "AddAffiliation", "Failed", accountCode,
-                        result.Message, result.ErrorMessage ?? string.Empty);
+                    Log(pseudoRow, "Phase 4", "AddAffiliation", "Failed", accountCode, string.Empty, ex.Message);
+                    WriteProgress("Phase 4 affiliation update", processedAffiliations, totalAffiliations,
+                        $"affiliations +{session.Summary.AffiliationsAdded - affiliationStart}, failures +{session.Summary.AffiliationFailures - affiliationFailureStart}");
                 }
-
-                WriteProgress("Phase 4 affiliation update", processedAffiliations, totalAffiliations,
-                    $"affiliations +{session.Summary.AffiliationsAdded - affiliationStart}, failures +{session.Summary.AffiliationFailures - affiliationFailureStart}");
-            }
-            catch (Exception ex)
-            {
-                session.Summary.AffiliationFailures++;
-                session.Summary.Failures++;
-                Log(pseudoRow, "Phase 4", "AddAffiliation", "Failed", accountCode, string.Empty, ex.Message);
-                WriteProgress("Phase 4 affiliation update", processedAffiliations, totalAffiliations,
-                    $"affiliations +{session.Summary.AffiliationsAdded - affiliationStart}, failures +{session.Summary.AffiliationFailures - affiliationFailureStart}");
             }
         }
+    }
+
+    private static IReadOnlyList<string> ParseAffiliationCodes(string? rawInput)
+    {
+        return TextUtil.Clean(rawInput)
+            .Split(new[] { ',', ';', '\r', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(TextUtil.CleanKeyField)
+            .Where(code => !string.IsNullOrWhiteSpace(code))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private void RunPhase5(SessionContext session)
@@ -993,10 +1010,10 @@ public sealed class PhaseRunner
             File.Copy(file, destination, overwrite: false);
         }
 
-        string reportPath = Path.Combine(archiveFolder, $"team_update_summary_{session.Timestamp}.xlsx");
+        string reportPath = Path.Combine(archiveFolder, $"line_status_handoff_{session.Timestamp}.xlsx");
         _excel.CreateTeamUpdateWorkbook(reportPath, session, _audit.Records);
         session.TeamUpdateWorkbookFile = reportPath;
-        Console.WriteLine($"Team update workbook: {reportPath}");
+        Console.WriteLine($"Line status handoff workbook: {reportPath}");
 
         if (_config.CleanupPhase0To4AfterArchive)
         {
@@ -1157,7 +1174,7 @@ public sealed class PhaseRunner
         Console.WriteLine($"Number of affiliation failures: {session.Summary.AffiliationFailures}");
         Console.WriteLine($"Number of failures: {session.Summary.Failures}");
         Console.WriteLine($"Location of final archive folder: {session.ArchiveFolder}");
-        Console.WriteLine($"Team update workbook: {session.TeamUpdateWorkbookFile}");
+        Console.WriteLine($"Line status handoff workbook: {session.TeamUpdateWorkbookFile}");
 
         if (session.Summary.DryRunAccountsPrepared > 0 || session.Summary.DryRunContactsPrepared > 0)
         {

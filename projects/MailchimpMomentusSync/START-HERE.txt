@@ -1,0 +1,43 @@
+KALLMAN MAILCHIMP TO MOMENTUS SYNC - UPDATE 3.3.0
+=================================================
+
+HOW TO UPDATE WHAT YOU ALREADY HAVE
+
+1. Close Mailchimp to Momentus Sync.
+2. Copy every file from this folder into:
+
+   C:\kwi-automations\projects\MailchimpMomentusSync
+
+3. When Windows asks, choose "Replace the files in the destination".
+4. Double-click "Run Mailchimp Sync.cmd".
+
+That is it. Your saved API credentials stay where they are.
+
+WHAT IS NEW
+
+- The main screen is now a multi-file queue with one row per campaign.
+- Each row has File, Campaign Name, Sent Date, Event ID, Campaign Type,
+  Salesperson, and a live CSV review.
+- Use "+ Add another file" to build the queue, then "Run Queue" once.
+- Files run sequentially with separate audit folders. A failed row stops later
+  rows from starting.
+- A new Momentus campaign is created as the LAST step of every import.
+- Only contacts who opened or clicked are added as campaign details.
+- Exhibitor organizations still receive the existing activities and notes, but
+  they do not create additional OPE or CLI campaign details.
+- Statuses are Opened (OPE) and Opened and Clicked (CLI).
+- No-interaction recipients are ignored, but still count toward Emails Sent and
+  the campaign response percentage.
+- The campaign records the Event, salesperson Coordinator, total emails sent,
+  response percentage, summary, sent Start Date, and today's End Date.
+- The existing exhibitor, activity, and note work remains click-only.
+- Engaged contacts that have no Primary Account remain campaign details and are
+  skipped only for organization-dependent exhibitor work.
+- Contact account codes that are not found in Momentus are also skipped and
+  listed in the audit.
+- Partial campaigns with more than 1,000 existing details can now resume safely.
+- Invalid organization details are skipped while remaining valid details continue.
+- The progress window now shows the current phase, counts, organization account,
+  campaign-detail progress, and recent log messages.
+
+DO NOT RERUN THE SOFEX FILE THAT ALREADY COMPLETED.

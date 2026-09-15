@@ -51,3 +51,18 @@ projects/Schedule of events/8961AB00
 Thumbs.db
 .DS_Store
 .vscode/
+
+# Local/temporary development files
+.codex-artifacts/
+*.lnk
+**/New folder/
+**/Working Account import/
+
+# Node dependencies
+node_modules/
+
+# Compiled/published application output
+**/publish/
+
+# Packaged Registration List releases
+projects/Registration-List-Tool-*/

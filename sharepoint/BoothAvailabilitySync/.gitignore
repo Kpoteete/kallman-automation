@@ -1,0 +1,4 @@
+bin/
+obj/
+state/logs/*.log
+state/last-success.json

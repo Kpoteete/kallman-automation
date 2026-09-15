@@ -1,0 +1,317 @@
+{
+  "version": "2026.08.19.4",
+  "campaigns": [
+    {
+      "CampaignType": "Launch Email",
+      "ClickType": "LMC",
+      "OpenType": "LMO"
+    },
+    {
+      "CampaignType": "Sponsorship Mailing",
+      "ClickType": "1SC",
+      "OpenType": "1SO"
+    },
+    {
+      "CampaignType": "Portfolio Mailing",
+      "ClickType": "PMC",
+      "OpenType": "PMO"
+    },
+    {
+      "CampaignType": "Blast email #1",
+      "ClickType": "CC2",
+      "OpenType": "CO2"
+    },
+    {
+      "CampaignType": "Blast email #2",
+      "ClickType": "6MC",
+      "OpenType": "6MO"
+    },
+    {
+      "CampaignType": "Blast email #3",
+      "ClickType": "1YC",
+      "OpenType": "1YO"
+    },
+    {
+      "CampaignType": "Blast email #4",
+      "ClickType": "3MC",
+      "OpenType": "3MO"
+    },
+    {
+      "CampaignType": "Blast email #5",
+      "ClickType": "CMC",
+      "OpenType": "CMO"
+    },
+    {
+      "CampaignType": "Last call mailer",
+      "ClickType": "LCC",
+      "OpenType": "LCO"
+    }
+  ],
+  "salespeople": [
+    {
+      "Salesperson": "Rachael Adriano",
+      "SalespersonAccountCode": "ADRIANO"
+    },
+    {
+      "Salesperson": "Sydney Albano",
+      "SalespersonAccountCode": "VDSWRFBE"
+    },
+    {
+      "Salesperson": "Mark ALT",
+      "SalespersonAccountCode": "MALT523"
+    },
+    {
+      "Salesperson": "Vanessa Brook",
+      "SalespersonAccountCode": "VBROOK"
+    },
+    {
+      "Salesperson": "Claudia Caceres",
+      "SalespersonAccountCode": "CCACERES"
+    },
+    {
+      "Salesperson": "Mirana Camili",
+      "SalespersonAccountCode": "CAMILI"
+    },
+    {
+      "Salesperson": "Carolyn Carniaux",
+      "SalespersonAccountCode": "CCARNIAU"
+    },
+    {
+      "Salesperson": "Cynthia Contreras",
+      "SalespersonAccountCode": "CONTRERA"
+    },
+    {
+      "Salesperson": "Alli Cozic",
+      "SalespersonAccountCode": "ACOZIC"
+    },
+    {
+      "Salesperson": "Connie Dipreta",
+      "SalespersonAccountCode": "CONNID"
+    },
+    {
+      "Salesperson": "Erica Egan",
+      "SalespersonAccountCode": "EGAN"
+    },
+    {
+      "Salesperson": "Megan Ekert",
+      "SalespersonAccountCode": "EKERT"
+    },
+    {
+      "Salesperson": "Camilla Ewart",
+      "SalespersonAccountCode": "CEWART"
+    },
+    {
+      "Salesperson": "Philippa Ewart",
+      "SalespersonAccountCode": "00129998"
+    },
+    {
+      "Salesperson": "Katie Fergus",
+      "SalespersonAccountCode": "KATIEF"
+    },
+    {
+      "Salesperson": "Gloria Finnan",
+      "SalespersonAccountCode": "FINNAN"
+    },
+    {
+      "Salesperson": "Rob French",
+      "SalespersonAccountCode": "RFRENCH"
+    },
+    {
+      "Salesperson": "Lindsay Hish",
+      "SalespersonAccountCode": "BRTEBETW"
+    },
+    {
+      "Salesperson": "Christina Jennings",
+      "SalespersonAccountCode": "CJENNING"
+    },
+    {
+      "Salesperson": "Patty Kallman",
+      "SalespersonAccountCode": "KALLMAN"
+    },
+    {
+      "Salesperson": "Tom Kallman",
+      "SalespersonAccountCode": "TKALLMAN"
+    },
+    {
+      "Salesperson": "Brian Keller",
+      "SalespersonAccountCode": "BKELLER"
+    },
+    {
+      "Salesperson": "Peter Kelley",
+      "SalespersonAccountCode": "PKELLEY"
+    },
+    {
+      "Salesperson": "Sara Kelley",
+      "SalespersonAccountCode": "SARAKE52"
+    },
+    {
+      "Salesperson": "Melissa King",
+      "SalespersonAccountCode": "KING"
+    },
+    {
+      "Salesperson": "Poteete Kyle",
+      "SalespersonAccountCode": "PKYLE"
+    },
+    {
+      "Salesperson": "Ondria Laboy",
+      "SalespersonAccountCode": "LABOY"
+    },
+    {
+      "Salesperson": "Stephanie Laughlin",
+      "SalespersonAccountCode": "LAUGHLIN"
+    },
+    {
+      "Salesperson": "Melissa Lima",
+      "SalespersonAccountCode": "LIMAACCT"
+    },
+    {
+      "Salesperson": "Erica Marino",
+      "SalespersonAccountCode": "MARINO"
+    },
+    {
+      "Salesperson": "Mike Mauguin",
+      "SalespersonAccountCode": "MAUGUIN"
+    },
+    {
+      "Salesperson": "Peter McKenna",
+      "SalespersonAccountCode": "PMCKENNA"
+    },
+    {
+      "Salesperson": "Jodi Munzer",
+      "SalespersonAccountCode": "JMUNZER"
+    },
+    {
+      "Salesperson": "Jack Newman",
+      "SalespersonAccountCode": "NEWMAN"
+    },
+    {
+      "Salesperson": "Jan Ng",
+      "SalespersonAccountCode": "JNG523"
+    },
+    {
+      "Salesperson": "Fernanda Ossa",
+      "SalespersonAccountCode": "FOSSA"
+    },
+    {
+      "Salesperson": "Sonia Perrone",
+      "SalespersonAccountCode": "PERRONE"
+    },
+    {
+      "Salesperson": "Michael Petrassi",
+      "SalespersonAccountCode": "MPETRASS"
+    },
+    {
+      "Salesperson": "Tracy Plant",
+      "SalespersonAccountCode": "PLANT"
+    },
+    {
+      "Salesperson": "Carol Poteete",
+      "SalespersonAccountCode": "CPOTEETE"
+    },
+    {
+      "Salesperson": "Michael Poteete",
+      "SalespersonAccountCode": "POTEETE"
+    },
+    {
+      "Salesperson": "Sales Rep",
+      "SalespersonAccountCode": "SALESRE"
+    },
+    {
+      "Salesperson": "Sales Rep",
+      "SalespersonAccountCode": "SALESRE1"
+    },
+    {
+      "Salesperson": "Barbara Reyes",
+      "SalespersonAccountCode": "BREYES"
+    },
+    {
+      "Salesperson": "Evelyn Roberts",
+      "SalespersonAccountCode": "ROBERTS"
+    },
+    {
+      "Salesperson": "Toni Roselli",
+      "SalespersonAccountCode": "TROSELLI"
+    },
+    {
+      "Salesperson": "Enrique Rosende",
+      "SalespersonAccountCode": "EROSENDE"
+    },
+    {
+      "Salesperson": "Laura Rossi",
+      "SalespersonAccountCode": "ROSSI"
+    },
+    {
+      "Salesperson": "Patricia Rowe",
+      "SalespersonAccountCode": "ROWE"
+    },
+    {
+      "Salesperson": "Jerilyn Rynkowski",
+      "SalespersonAccountCode": "RYNKOWSK"
+    },
+    {
+      "Salesperson": "Fernando Salinas",
+      "SalespersonAccountCode": "FSALINAS"
+    },
+    {
+      "Salesperson": "Courtney Serpico",
+      "SalespersonAccountCode": "CSERPICO"
+    },
+    {
+      "Salesperson": "Nicole Sherwood",
+      "SalespersonAccountCode": "SHERWOOD"
+    },
+    {
+      "Salesperson": "Serena Sidawi",
+      "SalespersonAccountCode": "SSIDAWI5"
+    },
+    {
+      "Salesperson": "Sharon Slender",
+      "SalespersonAccountCode": "SSLENDER"
+    },
+    {
+      "Salesperson": "Kevin Tighe",
+      "SalespersonAccountCode": "KTIGHE"
+    },
+    {
+      "Salesperson": "McNally Tricia",
+      "SalespersonAccountCode": "MCNALLY"
+    },
+    {
+      "Salesperson": "Lorena Troncoso",
+      "SalespersonAccountCode": "LCOSO52"
+    },
+    {
+      "Salesperson": "Lorena Troncoso",
+      "SalespersonAccountCode": "LORENA"
+    },
+    {
+      "Salesperson": "Berna Uras",
+      "SalespersonAccountCode": "BFEBDGD"
+    },
+    {
+      "Salesperson": "Jen Vinersmith",
+      "SalespersonAccountCode": "00056027"
+    },
+    {
+      "Salesperson": "Allison Voth",
+      "SalespersonAccountCode": "VOTH"
+    },
+    {
+      "Salesperson": "Joelle Voza",
+      "SalespersonAccountCode": "VOZA"
+    },
+    {
+      "Salesperson": "Joan Williams",
+      "SalespersonAccountCode": "JWILLIAM"
+    },
+    {
+      "Salesperson": "Lauren Williams",
+      "SalespersonAccountCode": "LWILLIAM"
+    },
+    {
+      "Salesperson": "Lainie Zwecher",
+      "SalespersonAccountCode": "LAINIEZ"
+    }
+  ],
+  "catalogSha256": "2B5FEE76C35CA3D74C73670ACD1E699020C59C7AE570F340B572B1187B32F809"
+}

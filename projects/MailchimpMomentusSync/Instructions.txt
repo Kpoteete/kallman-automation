@@ -1,63 +1,108 @@
-MAILCHIMP TO MOMENTUS SYNC
-=========================
+KALLMAN MAILCHIMP TO MOMENTUS SYNC
+=================================
+Release 3.3.0
 
-MONTHLY USE
+NORMAL USE
 
 1. Double-click "Run Mailchimp Sync.cmd".
-2. Choose the Mailchimp CSV file.
-3. Review the event number and usable-row count shown on screen.
-4. Type RUN only if they are correct.
-5. Wait for "SYNC COMPLETED." The audit/results folder opens automatically.
+2. In the first queue row, click the file cell and select the raw Mailchimp CSV.
+3. Type the CAMPAIGN name.
+   Example: SOFEX 2027 Last Call
+4. Click the date cell and select the CAMPAIGN SENT DATE shown in Mailchimp.
+5. Enter the four-digit Event ID.
+6. Select the CAMPAIGN TYPE.
+   This automatically sets the Click and Open activity codes.
+7. Select the SALESPERSON.
+   This automatically sets the salesperson account code.
+8. Review the row's engaged campaign recipients and clicked activity/note count.
+9. Click "+ Add another file" and repeat for any additional campaign files.
+10. Click "Run Queue", review every row, and confirm.
 
-The original CSV is never moved or changed.
+Files run one at a time in the order shown. Each file has its own audit folder.
+If a file fails, later rows do not start.
 
+IMPORTANT DIFFERENCE
 
-FIRST-TIME SETUP
+CAMPAIGN = the name you want written on the exhibitor engagement note.
+CAMPAIGN SENT DATE = the date the campaign was sent from Mailchimp.
+CAMPAIGN TYPE = the dropdown used only to choose the Momentus activity codes.
 
-Double-click "Setup Mailchimp Sync.cmd" and enter the dedicated Momentus API
-User ID, Secret, and Key. Secret and Key input is hidden. The saved credentials
-are encrypted for your Windows account on this computer.
+MOMENTUS WORDING
 
-If you do not have the dedicated API credentials, stop and ask the automation
-owner. Do not use another person's credentials.
+The exhibitor note heading will look like:
+  SOFEX 2027 Last Call - Sent on August 21, 2026
 
+Activity subjects use that same friendly heading instead of an internal code.
+Activity text shows the campaign, opened count, clicked count, and sent date.
 
-REQUIRED CSV LAYOUT
+RAW MAILCHIMP CSV
 
-The export must have a header row and these columns in this exact order:
+The CSV must contain these headers. Their order does not matter:
 
-  A  Event ID
-  B  Campaign Type
-  C  Salesperson
-  D  Salesperson Account Code
-  E  Click Type
-  F  Open Type
-  G  Email
-  H  Clicks
-  I  Opens
-  J  First Name
-  K  Last Name
-  L  Contact Account Code
+  email
+  first_name
+  last_name
+  opens
+  clicks
+  account_code
 
-One CSV file may contain only one Event ID.
+Extra Mailchimp columns are ignored.
+Only records that opened or clicked, have an Account Code, and resolve to a
+Momentus contact are added to the new Momentus campaign. No-interaction records
+are ignored. Engaged contacts with no Primary Account remain in the campaign
+but skip organization-dependent work. Account codes not found in Momentus are
+skipped and listed in the audit CSV.
+Only records with Clicks greater than zero go through the existing exhibitor,
+activity, and note workflow.
 
+MOMENTUS CAMPAIGN
+
+The campaign is created LAST and includes every engaged contact. Exhibitor
+organizations are not campaign details, so the OPE and CLI totals represent
+people rather than people plus companies.
+
+Campaign detail statuses:
+  OPE  Opened               Opens greater than 0 and Clicks 0
+  CLI  Opened and Clicked   Clicks greater than 0
+
+The campaign uses the selected Event ID, salesperson as Coordinator, total
+emails sent, rounded response percentage, sent date as Start Date, and today's
+date as End Date. Emails Sent and response percentage use the full Mailchimp
+send population, including ignored no-interaction rows. Group is left blank.
+
+Followed Up is not assigned automatically. Staff can set it later in Momentus.
+
+If an exact campaign already exists after a partial run, the app loads every
+existing detail page and adds only missing valid accounts. A stale organization
+account is skipped and identified in the output and audit.
+
+An engaged contact with no Primary Account is still added to the campaign. The
+contact is skipped only for exhibitor, activity, and note work that requires an
+organization.
+
+OFFICIAL CAMPAIGN TYPES
+
+Launch Email              Open LMO   Click LMC
+Sponsorship Mailing       Open 1SO   Click 1SC
+Portfolio Mailing         Open PMO   Click PMC
+Blast email #1            Open CO2   Click CC2
+Blast email #2            Open 6MO   Click 6MC
+Blast email #3            Open 1YO   Click 1YC
+Blast email #4            Open 3MO   Click 3MC
+Blast email #5            Open CMO   Click CMC
+Last call mailer          Open LCO   Click LCC
+
+UPDATE LISTS LATER
+
+Click "Manage Lists" in the app.
+You can add, edit, or remove Campaign Types, activity codes, Salespeople, and
+salesperson account codes.
+
+Saved user changes are stored at:
+  %LOCALAPPDATA%\Kallman\MailchimpMomentusSync\ImportMappings.json
 
 IMPORTANT
 
-- This is a LIVE update. It can add Momentus exhibitors, activities, and notes.
-- If the screen says "SYNC NEEDS ATTENTION", do not immediately rerun it.
-  Give the displayed run-folder path to the automation owner for review.
-- Run history is stored under:
-  %LOCALAPPDATA%\Kallman\MailchimpMomentusSync\runs
-- To replace expired credentials, run "Setup Mailchimp Sync.cmd" again.
-
-
-FOR THE AUTOMATION OWNER
-
-Run Build-Release.ps1 to create the self-contained Windows package:
-
-  powershell -ExecutionPolicy Bypass -File .\Build-Release.ps1
-
-The ZIP is written to:
-
-  C:\kwi-automations\artifacts\MailchimpMomentusSync\
+- This is a live Momentus update.
+- Do not rerun a completed file.
+- Review the audit if a run reports a real error.

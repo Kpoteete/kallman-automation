@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -14,12 +14,13 @@ class Program
     // ========================================================================
     // SECTION 1: CSV COLUMN MAP
     // ------------------------------------------------------------------------
-    // This block is the single source of truth for the Mailchimp CSV layout.
-    // If the source export ever changes, update these constants first.
+    // This block is the single source of truth for the prepared import CSV.
+    // The desktop launcher converts the raw Mailchimp export into this layout.
+    // The raw source file is never edited.
     //
-    // Final confirmed layout from Kyle:
+    // Prepared layout:
     //   A = Event ID
-    //   B = Campaign Type
+    //   B = Campaign (free-text note title supplied by the launcher)
     //   C = Salesperson
     //   D = Salesperson Account Code
     //   E = Click Type
@@ -30,6 +31,9 @@ class Program
     //   J = First Name
     //   K = Last Name
     //   L = Account Code   (this is treated as the CONTACT account code)
+    //   M = Campaign Sent Date (ISO yyyy-MM-dd, selected in the launcher)
+    //   N = Campaign Emails Sent (total rows in the Mailchimp export)
+    //   O = Campaign Response Percentage (whole-number percent)
     //
     // Important business rule carried forward from the original working file:
     //   The CSV account code is NOT assumed to be the exhibitor org account.
@@ -48,6 +52,9 @@ class Program
     private const string FIRST_NAME_COLUMN = "J";
     private const string LAST_NAME_COLUMN = "K";
     private const string CONTACT_ACCOUNT_COLUMN = "L";
+    private const string CAMPAIGN_SENT_DATE_COLUMN = "M";
+    private const string CAMPAIGN_EMAILS_SENT_COLUMN = "N";
+    private const string CAMPAIGN_RESPONSE_PERCENTAGE_COLUMN = "O";
 
     // ========================================================================
     // SECTION 2: STANDARDIZED RUNTIME SETTINGS
@@ -60,6 +67,8 @@ class Program
     private const string MOMENTUS_URI = "https://kallman.ungerboeck.com/prod";
     private const bool DRY_RUN = false;
     private const string ACTIVITY_RECIPIENT = "SALESRE";
+    private const string CAMPAIGN_DESIGNATION =
+        Ungerboeck.Api.Models.USISDKConstants.AccountDesignations.EventSales;
 
     // ========================================================================
     // SECTION 3: DEFAULT EXHIBITOR VALUES
@@ -73,18 +82,18 @@ class Program
     // Current note behavior:
     //   - Note type = EX
     //   - Note class = ECA
-    //   - Title = <Campaign Type> - YYYY-DD-MM
+    //   - Title = <Campaign> - Sent on <Month D, YYYY>
     //   - Duplicate handling = update existing note instead of adding another
     //
     // New enhancement requested here:
     //   The BODY of the note should be append-friendly across campaigns.
     //   That means the note body is now built as one or more campaign blocks:
     //
-    //     Campaign A - 2026-12-03
+    //     Campaign A - Sent on March 12, 2026
     //     John Smith - clicked once, opened once
     //     Mary Jones - opened 2
     //
-    //     Campaign B - 2026-12-03
+    //     Campaign B - Sent on March 12, 2026
     //     Chris Lane - clicked three times
     //
     //   When importing another campaign later, the code keeps the old block(s)
@@ -224,16 +233,18 @@ class Program
         string activityStatus,
         bool skipActivityDupes)
     {
+        Console.WriteLine("STEP 1 OF 6 - Reading and validating the prepared Mailchimp file...");
+        Console.Out.Flush();
         List<CsvRow> rows = LoadRows(csvPath);
 
-        Console.WriteLine("CSV rows read: " + rows.Count);
+        Console.WriteLine("Campaign recipient rows read: " + rows.Count);
         if (rows.Count == 0)
         {
             WriteAuditAndCompleteEmptyFile(
                 csvPath,
                 completeDir,
                 "NO_ROWS",
-                "No valid rows found in file. Check the configured columns and confirm opens/clicks are populated.");
+                "No campaign recipient rows were found in the prepared file.");
             return;
         }
 
@@ -247,24 +258,119 @@ class Program
         int eventId = fileEventIds[0];
         Console.WriteLine("Detected Event ID: " + eventId);
 
-        Dictionary<string, ExhibitorAggregate> aggregates =
-            AggregateRowsByResolvedOrg(apiClient, ORG_CODE, rows);
-
-        Console.WriteLine("Unique exhibitor org accounts to process: " + aggregates.Count);
-        if (aggregates.Count == 0)
+        List<DateTime> fileCampaignSentDates = rows
+            .Select(r => r.CampaignSentDate.Date)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+        if (fileCampaignSentDates.Count != 1)
         {
-            WriteAuditAndCompleteEmptyFile(
-                csvPath,
-                completeDir,
-                "NO_ORG_MATCH",
-                "No rows resolved to an org PrimaryAccount. Check the contact account codes in column L.");
-            return;
+            throw new Exception(
+                "This prepared file contains multiple Campaign Sent Dates. Use one Mailchimp sent date per import.");
         }
 
-        Console.WriteLine("Loading existing exhibitors for Event " + eventId + "...");
-        Dictionary<string, int> existingByAccount =
-            LoadExistingExhibitorsByAccount(apiClient, ORG_CODE, eventId);
-        Console.WriteLine("Existing exhibitors found: " + existingByAccount.Count);
+        Console.WriteLine(
+            "Campaign Sent Date: " +
+            fileCampaignSentDates[0].ToString("MMMM d, yyyy", CultureInfo.InvariantCulture));
+
+        int campaignEmailsSent = GetSinglePreparedMetric(
+            rows.Select(r => r.CampaignEmailsSent),
+            "Campaign Emails Sent");
+        int campaignResponsePercentage = GetSinglePreparedMetric(
+            rows.Select(r => r.CampaignResponsePercentage),
+            "Campaign Response Percentage");
+        if (campaignEmailsSent <= 0)
+        {
+            throw new Exception("Campaign Emails Sent must be greater than zero.");
+        }
+        if (campaignResponsePercentage < 0 || campaignResponsePercentage > 100)
+        {
+            throw new Exception("Campaign Response Percentage must be between 0 and 100.");
+        }
+
+        List<string> campaignTitles = rows
+            .Select(r => (r.CampaignType ?? "").Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (campaignTitles.Count != 1)
+        {
+            throw new Exception("This prepared file must contain exactly one Campaign name.");
+        }
+        if (campaignTitles[0].Length > 60)
+        {
+            throw new Exception("The Campaign name cannot exceed Momentus's 60-character Description limit.");
+        }
+
+        List<CsvRow> campaignDetailRows = rows
+            .Where(r => r.Opens > 0 || r.Clicks > 0)
+            .ToList();
+        Console.WriteLine("Engaged campaign contact rows: " + campaignDetailRows.Count);
+        Console.WriteLine(
+            "No-interaction rows ignored for campaign details: " +
+            (rows.Count - campaignDetailRows.Count));
+
+        List<CsvRow> engagementRows = campaignDetailRows.Where(r => r.Clicks > 0).ToList();
+        Console.WriteLine("Click-qualified activity/note rows: " + engagementRows.Count);
+
+        // Resolve and validate the complete campaign roster before making any
+        // writes. The campaign itself and its details are still created last.
+        Console.WriteLine(
+            "STEP 2 OF 6 - Resolving " + campaignDetailRows.Count +
+            " engaged contacts in Momentus...");
+        Console.Out.Flush();
+        CampaignRoster campaignRoster;
+        try
+        {
+            campaignRoster = BuildCampaignRoster(apiClient, ORG_CODE, campaignDetailRows);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                ex.Message + " No live changes were made for this file.",
+                ex);
+        }
+        Console.WriteLine("Validated campaign recipients: " + campaignRoster.Recipients.Count);
+        Console.WriteLine(
+            "Campaign contacts included without a Primary Account: " +
+            campaignRoster.ContactsWithoutPrimaryAccounts.Count);
+        Console.WriteLine(
+            "Skipped contacts not found in Momentus: " +
+            campaignRoster.SkippedMissingAccounts.Count);
+
+        Console.WriteLine("STEP 3 OF 6 - Checking the campaign and existing exhibitors...");
+        Console.Out.Flush();
+        CampaignSyncPlan campaignPlan = PrepareCampaignSync(
+            apiClient,
+            ORG_CODE,
+            eventId,
+            campaignTitles[0],
+            fileCampaignSentDates[0]);
+        Console.WriteLine(
+            campaignPlan.ExistingCampaign == null
+                ? "Campaign preflight: a new campaign will be created last."
+                : "Campaign preflight: an existing partial campaign will be resumed last.");
+
+        List<CsvRow> qualifiedEngagementRows = engagementRows
+            .Where(row => campaignRoster.ContactToOrgAccount.ContainsKey(
+                NormalizeAccountCode(row.ContactAccountCode)))
+            .ToList();
+        Dictionary<string, ExhibitorAggregate> aggregates =
+            AggregateRowsByResolvedOrg(qualifiedEngagementRows, campaignRoster.ContactToOrgAccount);
+
+        Console.WriteLine("Unique exhibitor org accounts to process: " + aggregates.Count);
+        Dictionary<string, int> existingByAccount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (aggregates.Count > 0)
+        {
+            Console.WriteLine("Loading existing exhibitors for Event " + eventId + "...");
+            existingByAccount = LoadExistingExhibitorsByAccount(apiClient, ORG_CODE, eventId);
+            Console.WriteLine("Existing exhibitors found: " + existingByAccount.Count);
+        }
+
+        Console.WriteLine(
+            "STEP 4 OF 6 - Processing " + aggregates.Count +
+            " clicked exhibitor organizations, activities, and notes...");
+        Console.Out.Flush();
 
         int addedExhibitors = 0;
         int openActivitiesAdded = 0;
@@ -277,11 +383,45 @@ class Program
         {
             "EventId,OrgAccountCode,SalespersonAccount,OpenType,ClickType,Opens,Clicks,ExhibitorID,Action,Message"
         };
+        string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        string auditPath = Path.Combine(
+            completeDir,
+            "momentus_mailchimp_sync_audit_" + Path.GetFileNameWithoutExtension(csvPath) + "_" + timestamp + ".csv");
+        File.WriteAllLines(auditPath, auditLines);
 
+        foreach (SkippedCampaignRecipient skipped in campaignRoster.ContactsWithoutPrimaryAccounts)
+        {
+            auditLines.Add(
+                eventId + ",,,,," +
+                skipped.Opens + "," +
+                skipped.Clicks + ",,CAMPAIGN_CONTACT_ONLY_NO_PRIMARY," +
+                EscapeCsv(
+                    "Included contact " + skipped.ContactAccountCode +
+                    " in the campaign; skipped exhibitor work because the contact has no Primary Account"));
+        }
+
+        foreach (SkippedCampaignRecipient skipped in campaignRoster.SkippedMissingAccounts)
+        {
+            auditLines.Add(
+                eventId + ",,,,," +
+                skipped.Opens + "," +
+                skipped.Clicks + ",,SKIP_ACCOUNT_NOT_FOUND," +
+                EscapeCsv(
+                    "Skipped contact " + skipped.ContactAccountCode +
+                    " because the account was not found in Momentus"));
+        }
+        File.WriteAllLines(auditPath, auditLines);
+
+        int exhibitorProgress = 0;
         foreach (KeyValuePair<string, ExhibitorAggregate> kvp in aggregates.OrderBy(k => k.Key))
         {
+            exhibitorProgress++;
             string orgAccountCode = kvp.Key;
             ExhibitorAggregate exhibitorData = kvp.Value;
+            Console.WriteLine(
+                "Exhibitor progress " + exhibitorProgress + "/" + aggregates.Count +
+                " - org account " + orgAccountCode);
+            Console.Out.Flush();
 
             int exhibitorId;
             bool exhibitorAlreadyExists = existingByAccount.TryGetValue(orgAccountCode, out exhibitorId);
@@ -326,6 +466,7 @@ class Program
                             exhibitorData.ClickTypeCode + "," +
                             exhibitorData.TotalOpens + "," +
                             exhibitorData.TotalClicks + ",,ERROR_ADD_EXHIBITOR,Created exhibitor but ExhibitorID was null or 0");
+                        File.WriteAllLines(auditPath, auditLines);
                         continue;
                     }
 
@@ -341,6 +482,7 @@ class Program
                         exhibitorData.TotalOpens + "," +
                         exhibitorData.TotalClicks + "," +
                         exhibitorId + ",ADD_EXHIBITOR,Added exhibitor record");
+                    File.WriteAllLines(auditPath, auditLines);
                 }
                 catch (Exception ex)
                 {
@@ -352,6 +494,7 @@ class Program
                         exhibitorData.ClickTypeCode + "," +
                         exhibitorData.TotalOpens + "," +
                         exhibitorData.TotalClicks + ",,ERROR_ADD_EXHIBITOR," + EscapeCsv(ex.Message));
+                    File.WriteAllLines(auditPath, auditLines);
                     continue;
                 }
             }
@@ -364,6 +507,15 @@ class Program
 
             foreach (ContactEngagement contact in exhibitorData.Contacts.OrderBy(c => c.SortKey))
             {
+                string activitySubject = BuildEngagementTitle(
+                    exhibitorData.CampaignType,
+                    exhibitorData.CampaignSentDate);
+                string activityText = BuildActivityEngagementText(
+                    exhibitorData.CampaignType,
+                    exhibitorData.CampaignSentDate,
+                    contact.Opens,
+                    contact.Clicks);
+
                 if (contact.Opens > 0 && !string.IsNullOrWhiteSpace(exhibitorData.OpenTypeCode))
                 {
                     bool didAddOpen = AddExhibitorActivity(
@@ -374,7 +526,8 @@ class Program
                         orgAccountCode,
                         contact.ContactAccountCode,
                         exhibitorData.OpenTypeCode,
-                        exhibitorData.OpenTypeCode + " - Open",
+                        activitySubject,
+                        activityText,
                         contact.Opens,
                         ACTIVITY_RECIPIENT,
                         activityStatus,
@@ -397,7 +550,8 @@ class Program
                         orgAccountCode,
                         contact.ContactAccountCode,
                         exhibitorData.ClickTypeCode,
-                        exhibitorData.ClickTypeCode + " - Click",
+                        activitySubject,
+                        activityText,
                         contact.Clicks,
                         ACTIVITY_RECIPIENT,
                         activityStatus,
@@ -411,7 +565,9 @@ class Program
                 }
             }
 
-            string noteTitle = BuildEngagementNoteTitle(exhibitorData.CampaignType, DateTime.Now);
+            string noteTitle = BuildEngagementTitle(
+                exhibitorData.CampaignType,
+                exhibitorData.CampaignSentDate);
             string noteBlock = BuildEngagementNoteBlock(noteTitle, exhibitorData);
 
             NoteUpsertResult noteResult = UpsertExhibitorEngagementNote(
@@ -440,13 +596,43 @@ class Program
                 exhibitorData.TotalOpens + "," +
                 exhibitorData.TotalClicks + "," +
                 exhibitorId + ",OK,Processed exhibitor with activities and note");
+            File.WriteAllLines(auditPath, auditLines);
         }
 
-        string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        string auditPath = Path.Combine(
-            completeDir,
-            "momentus_mailchimp_sync_audit_" + Path.GetFileNameWithoutExtension(csvPath) + "_" + timestamp + ".csv");
+        // Campaign creation is intentionally the final Momentus write phase.
+        Console.WriteLine(
+            "STEP 5 OF 6 - Creating or resuming the campaign and processing " +
+            campaignRoster.Recipients.Count + " contact details...");
+        Console.Out.Flush();
+        CampaignSyncResult campaignResult = UpsertCampaignAndDetails(
+            apiClient,
+            ORG_CODE,
+            eventId,
+            campaignTitles[0],
+            fileCampaignSentDates[0],
+            DateTime.Today,
+            rows[0].SalespersonAccountCode,
+            campaignEmailsSent,
+            campaignResponsePercentage,
+            campaignRoster.Recipients,
+            campaignPlan);
 
+        auditLines.Add(
+            eventId + ",,,,,,,," +
+            (campaignResult.ReusedExistingCampaign ? "RESUME_CAMPAIGN" : "ADD_CAMPAIGN") + "," +
+            EscapeCsv(
+                "Campaign " + campaignResult.CampaignId +
+                "; details added=" + campaignResult.DetailsAdded +
+                "; updated=" + campaignResult.DetailsUpdated +
+                "; unchanged=" + campaignResult.DetailsUnchanged +
+                "; skipped invalid accounts=" + campaignResult.DetailsSkippedInvalidAccount +
+                "; campaign contacts included without Primary Account=" +
+                campaignRoster.ContactsWithoutPrimaryAccounts.Count +
+                "; contacts skipped because account was not found=" +
+                campaignRoster.SkippedMissingAccounts.Count));
+
+        Console.WriteLine("STEP 6 OF 6 - Saving the final audit and completing the run...");
+        Console.Out.Flush();
         File.WriteAllLines(auditPath, auditLines);
 
         string completedCsvPath = MoveFileToComplete(csvPath, completeDir, timestamp);
@@ -461,6 +647,20 @@ class Program
         Console.WriteLine("Click activities added: " + clickActivitiesAdded);
         Console.WriteLine("Exhibitor notes added: " + exhibitorNotesAdded);
         Console.WriteLine("Exhibitor notes updated: " + exhibitorNotesUpdated);
+        Console.WriteLine("Campaign ID: " + campaignResult.CampaignId);
+        Console.WriteLine("Campaign reused after prior partial run: " + campaignResult.ReusedExistingCampaign);
+        Console.WriteLine("Campaign details added: " + campaignResult.DetailsAdded);
+        Console.WriteLine("Campaign details updated: " + campaignResult.DetailsUpdated);
+        Console.WriteLine("Campaign details unchanged: " + campaignResult.DetailsUnchanged);
+        Console.WriteLine(
+            "Campaign details skipped because account was invalid: " +
+            campaignResult.DetailsSkippedInvalidAccount);
+        Console.WriteLine(
+            "Campaign contacts included without a Primary Account: " +
+            campaignRoster.ContactsWithoutPrimaryAccounts.Count);
+        Console.WriteLine(
+            "Contacts skipped because account was not found: " +
+            campaignRoster.SkippedMissingAccounts.Count);
         Console.WriteLine("Skipped because exhibitor id was missing: " + skippedNoExhibitorId);
         Console.WriteLine("Audit CSV: " + auditPath);
         Console.WriteLine("Completed CSV: " + completedCsvPath);
@@ -530,6 +730,9 @@ class Program
         int firstNameIdx = ColLetterToIndex(FIRST_NAME_COLUMN);
         int lastNameIdx = ColLetterToIndex(LAST_NAME_COLUMN);
         int contactIdx = ColLetterToIndex(CONTACT_ACCOUNT_COLUMN);
+        int campaignSentDateIdx = ColLetterToIndex(CAMPAIGN_SENT_DATE_COLUMN);
+        int campaignEmailsSentIdx = ColLetterToIndex(CAMPAIGN_EMAILS_SENT_COLUMN);
+        int campaignResponsePercentageIdx = ColLetterToIndex(CAMPAIGN_RESPONSE_PERCENTAGE_COLUMN);
 
         List<CsvRow> rows = new List<CsvRow>();
 
@@ -571,7 +774,8 @@ class Program
                 row.FirstName = (GetCol(cols, firstNameIdx) ?? "").Trim();
                 row.LastName = (GetCol(cols, lastNameIdx) ?? "").Trim();
                 row.ContactAccountCode = NormalizeAccountCode(GetCol(cols, contactIdx));
-
+                row.CampaignEmailsSent = ParseIntSafe(GetCol(cols, campaignEmailsSentIdx));
+                row.CampaignResponsePercentage = ParseIntSafe(GetCol(cols, campaignResponsePercentageIdx));
                 if (row.EventId <= 0)
                 {
                     continue;
@@ -582,10 +786,7 @@ class Program
                     continue;
                 }
 
-                if (row.Opens <= 0 && row.Clicks <= 0)
-                {
-                    continue;
-                }
+                row.CampaignSentDate = ParseCampaignSentDate(GetCol(cols, campaignSentDateIdx));
 
                 rows.Add(row);
             }
@@ -594,37 +795,144 @@ class Program
         return rows;
     }
 
-    private static Dictionary<string, ExhibitorAggregate> AggregateRowsByResolvedOrg(
+    private static CampaignRoster BuildCampaignRoster(
         ApiClient apiClient,
         string orgCode,
         List<CsvRow> rows)
     {
+        CampaignRoster roster = new CampaignRoster();
+        List<IGrouping<string, CsvRow>> contactGroups = rows
+            .GroupBy(r => NormalizeAccountCode(r.ContactAccountCode), StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key)
+            .ToList();
+        int contactsResolved = 0;
+
+        void ReportContactProgress()
+        {
+            contactsResolved++;
+            if (contactsResolved == 1 || contactsResolved % 25 == 0 ||
+                contactsResolved == contactGroups.Count)
+            {
+                Console.WriteLine(
+                    "Contact resolution progress " + contactsResolved + "/" +
+                    contactGroups.Count);
+                Console.Out.Flush();
+            }
+        }
+
+        foreach (IGrouping<string, CsvRow> group in contactGroups)
+        {
+            string contactAccountCode = group.Key;
+            int opens = group.Sum(r => r.Opens);
+            int clicks = group.Sum(r => r.Clicks);
+            AllAccountsModel? account;
+            try
+            {
+                account = apiClient.Endpoints.Accounts.Get(orgCode, contactAccountCode);
+            }
+            catch (Exception ex) when (IsMomentusAccountNotFound(ex))
+            {
+                roster.SkippedMissingAccounts.Add(new SkippedCampaignRecipient
+                {
+                    ContactAccountCode = contactAccountCode,
+                    Opens = group.Sum(r => r.Opens),
+                    Clicks = group.Sum(r => r.Clicks)
+                });
+                ReportContactProgress();
+                continue;
+            }
+
+            if (account == null)
+            {
+                roster.SkippedMissingAccounts.Add(new SkippedCampaignRecipient
+                {
+                    ContactAccountCode = contactAccountCode,
+                    Opens = group.Sum(r => r.Opens),
+                    Clicks = group.Sum(r => r.Clicks)
+                });
+                ReportContactProgress();
+                continue;
+            }
+
+            string orgAccountCode = NormalizeAccountCode(account.PrimaryAccount);
+            CampaignRecipient recipient = new CampaignRecipient
+            {
+                ContactAccountCode = contactAccountCode,
+                OrgAccountCode = orgAccountCode,
+                AccountCode = contactAccountCode,
+                TargetKind = "Contact",
+                Opens = opens,
+                Clicks = clicks,
+                EmailsSent = group.Count(),
+                Status = ClassifyCampaignDetailStatus(opens, clicks)
+            };
+
+            roster.Recipients.Add(recipient);
+            if (string.IsNullOrWhiteSpace(orgAccountCode))
+            {
+                roster.ContactsWithoutPrimaryAccounts.Add(new SkippedCampaignRecipient
+                {
+                    ContactAccountCode = contactAccountCode,
+                    Opens = opens,
+                    Clicks = clicks
+                });
+                ReportContactProgress();
+                continue;
+            }
+
+            roster.ContactToOrgAccount[contactAccountCode] = orgAccountCode;
+            ReportContactProgress();
+        }
+
+        return roster;
+    }
+
+    private static bool IsMomentusAccountNotFound(Exception exception)
+    {
+        if (exception.Message.IndexOf(
+                "Account entry not found for values",
+                StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return true;
+        }
+
+        if (exception is AggregateException aggregateException)
+        {
+            return aggregateException.InnerExceptions.Any(IsMomentusAccountNotFound);
+        }
+
+        return exception.InnerException != null &&
+               IsMomentusAccountNotFound(exception.InnerException);
+    }
+
+    private static string ClassifyCampaignDetailStatus(int opens, int clicks)
+    {
+        if (clicks > 0)
+        {
+            return "CLI";
+        }
+        if (opens > 0)
+        {
+            return "OPE";
+        }
+        return "I";
+    }
+
+    private static Dictionary<string, ExhibitorAggregate> AggregateRowsByResolvedOrg(
+        List<CsvRow> rows,
+        Dictionary<string, string> contactToOrgAccount)
+    {
         Dictionary<string, ExhibitorAggregate> exhibitorMap =
             new Dictionary<string, ExhibitorAggregate>(StringComparer.OrdinalIgnoreCase);
-
-        Dictionary<string, string> contactToOrgCache =
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (CsvRow row in rows)
         {
             string orgAccountCode;
-            if (!contactToOrgCache.TryGetValue(row.ContactAccountCode, out orgAccountCode))
+            if (!contactToOrgAccount.TryGetValue(row.ContactAccountCode, out orgAccountCode) ||
+                string.IsNullOrWhiteSpace(orgAccountCode))
             {
-                try
-                {
-                    orgAccountCode = ResolveOrgAccountFromContact(apiClient, orgCode, row.ContactAccountCode);
-                }
-                catch
-                {
-                    orgAccountCode = null;
-                }
-
-                contactToOrgCache[row.ContactAccountCode] = orgAccountCode;
-            }
-
-            if (string.IsNullOrWhiteSpace(orgAccountCode))
-            {
-                continue;
+                throw new InvalidOperationException(
+                    "The validated campaign roster did not contain contact " + row.ContactAccountCode + ".");
             }
 
             ExhibitorAggregate exhibitor;
@@ -636,6 +944,7 @@ class Program
                 exhibitor.SalespersonName = row.SalespersonName;
                 exhibitor.SalespersonAccountCode = row.SalespersonAccountCode;
                 exhibitor.CampaignType = row.CampaignType;
+                exhibitor.CampaignSentDate = row.CampaignSentDate;
                 exhibitor.ClickTypeCode = row.ClickTypeCode;
                 exhibitor.OpenTypeCode = row.OpenTypeCode;
                 exhibitorMap[orgAccountCode] = exhibitor;
@@ -715,6 +1024,7 @@ class Program
         string contactAccountCode,
         string typeCode,
         string subject,
+        string text,
         int count,
         string recipient,
         string status,
@@ -766,8 +1076,6 @@ class Program
             return true;
         }
 
-        string text = subject + " (count=" + count + ") - imported " + DateTime.Now.ToString("yyyy-MM-dd HH:mm");
-
         ActivitiesModel activityToAdd = new ActivitiesModel
         {
             OrganizationCode = orgCode,
@@ -782,8 +1090,300 @@ class Program
             Contact = contactAccountCode
         };
 
-        apiClient.Endpoints.Activities.Add(activityToAdd);
+        try
+        {
+            apiClient.Endpoints.Activities.Add(activityToAdd);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                "Could not add " + typeCode +
+                " activity for contact " + contactAccountCode +
+                " and exhibitor account " + orgAccountCode + ".",
+                ex);
+        }
         return true;
+    }
+
+    // ========================================================================
+    // CAMPAIGN + CAMPAIGN DETAILS (FINAL WRITE PHASE)
+    // ========================================================================
+    private static CampaignSyncPlan PrepareCampaignSync(
+        ApiClient apiClient,
+        string orgCode,
+        int eventId,
+        string campaignTitle,
+        DateTime campaignSentDate)
+    {
+        var searchOptions = new Ungerboeck.Api.Models.Options.Search
+        {
+            PageSize = 1000,
+            MaxResults = 100000
+        };
+
+        string campaignFilter =
+            "Designation eq '" + EscapeOData(CAMPAIGN_DESIGNATION) + "'" +
+            " and Event eq " + eventId +
+            " and Description eq '" + EscapeOData(campaignTitle) + "'";
+
+        var campaignResponse = apiClient.Endpoints.Campaigns.Search(
+            orgCode,
+            campaignFilter,
+            searchOptions);
+
+        List<CampaignsModel> exactMatches = campaignResponse != null && campaignResponse.Results != null
+            ? campaignResponse.Results
+                .Where(campaign =>
+                    campaign != null &&
+                    string.Equals(campaign.Designation, CAMPAIGN_DESIGNATION, StringComparison.OrdinalIgnoreCase) &&
+                    (campaign.Event ?? 0) == eventId &&
+                    string.Equals((campaign.Description ?? "").Trim(), campaignTitle.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                    campaign.StartDate.HasValue &&
+                    campaign.StartDate.Value.Date == campaignSentDate.Date)
+                .ToList()
+            : new List<CampaignsModel>();
+
+        if (exactMatches.Count > 1)
+        {
+            throw new InvalidOperationException(
+                "More than one existing campaign matches this event, campaign name, and sent date. " +
+                "No live changes were made for this file.");
+        }
+
+        CampaignsModel? existingCampaign = exactMatches.FirstOrDefault();
+        string detailCampaignId = existingCampaign != null && !string.IsNullOrWhiteSpace(existingCampaign.ID)
+            ? existingCampaign.ID
+            : "ZZZZZZZZZZ";
+
+        string detailFilter =
+            "CampaignDesignation eq '" + EscapeOData(CAMPAIGN_DESIGNATION) + "'" +
+            " and Campaign eq '" + EscapeOData(detailCampaignId) + "'";
+
+        List<CampaignDetailsModel> existingDetails = LoadAllCampaignDetails(
+            apiClient,
+            orgCode,
+            detailFilter,
+            searchOptions);
+
+        List<string> duplicateAccounts = existingDetails
+            .Where(detail => !string.IsNullOrWhiteSpace(detail.Account))
+            .GroupBy(detail => NormalizeAccountCode(detail.Account), StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToList();
+        if (duplicateAccounts.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "The existing campaign has duplicate detail rows for account " + duplicateAccounts[0] +
+                ". Review that campaign in Momentus before rerunning.");
+        }
+
+        return new CampaignSyncPlan
+        {
+            ExistingCampaign = existingCampaign,
+            ExistingDetails = existingDetails
+        };
+    }
+
+    private static List<CampaignDetailsModel> LoadAllCampaignDetails(
+        ApiClient apiClient,
+        string orgCode,
+        string filter,
+        Ungerboeck.Api.Models.Options.Search searchOptions)
+    {
+        List<CampaignDetailsModel> details = new List<CampaignDetailsModel>();
+        var response = apiClient.Endpoints.CampaignDetails.Search(
+            orgCode,
+            filter,
+            searchOptions);
+
+        while (response != null)
+        {
+            if (response.Results != null)
+            {
+                details.AddRange(response.Results.Where(detail => detail != null));
+            }
+
+            string nextLink = response.SearchMetadata != null &&
+                              response.SearchMetadata.Links != null
+                ? response.SearchMetadata.Links.Next
+                : "";
+            if (string.IsNullOrWhiteSpace(nextLink))
+            {
+                break;
+            }
+
+            response = apiClient.Endpoints.CampaignDetails.NavigateSearchList(nextLink);
+        }
+
+        return details;
+    }
+
+    private static CampaignSyncResult UpsertCampaignAndDetails(
+        ApiClient apiClient,
+        string orgCode,
+        int eventId,
+        string campaignTitle,
+        DateTime campaignSentDate,
+        DateTime campaignEndDate,
+        string coordinatorAccountCode,
+        int emailsSent,
+        int responsePercentage,
+        List<CampaignRecipient> recipients,
+        CampaignSyncPlan plan)
+    {
+        CampaignsModel? campaign = plan.ExistingCampaign;
+        bool reusedExisting = campaign != null;
+
+        if (campaign == null)
+        {
+            string summary = BuildCampaignSummary(campaignTitle, campaignSentDate, emailsSent);
+            CampaignsModel campaignToAdd = new CampaignsModel
+            {
+                OrganizationCode = orgCode,
+                ID = "*AUTO",
+                Designation = CAMPAIGN_DESIGNATION,
+                Description = campaignTitle,
+                Active = "A",
+                Event = eventId,
+                Coordinator = NormalizeAccountCode(coordinatorAccountCode),
+                EmailsSent = emailsSent,
+                EmailResponsesPercentage = responsePercentage,
+                Summary = summary,
+                StartDate = campaignSentDate.Date,
+                EndDate = campaignEndDate.Date
+                // Group is intentionally left blank.
+            };
+
+            campaign = apiClient.Endpoints.Campaigns.Add(campaignToAdd);
+            if (campaign == null || string.IsNullOrWhiteSpace(campaign.ID))
+            {
+                throw new InvalidOperationException(
+                    "Momentus created the campaign but did not return a Campaign ID. " +
+                    "Do not rerun until the campaign is reviewed.");
+            }
+        }
+
+        Dictionary<string, CampaignDetailsModel> existingByContact = plan.ExistingDetails
+            .Where(detail => !string.IsNullOrWhiteSpace(detail.Account))
+            .ToDictionary(
+                detail => NormalizeAccountCode(detail.Account),
+                detail => detail,
+                StringComparer.OrdinalIgnoreCase);
+
+        int detailsAdded = 0;
+        int detailsUnchanged = 0;
+        int detailsSkippedInvalidAccount = 0;
+        int detailsProcessed = 0;
+        int detailTotal = recipients.Count;
+
+        void ReportDetailProgress()
+        {
+            detailsProcessed++;
+            if (detailsProcessed == 1 || detailsProcessed % 25 == 0 ||
+                detailsProcessed == detailTotal)
+            {
+                Console.WriteLine(
+                    "Campaign detail progress " + detailsProcessed + "/" + detailTotal +
+                    " - added " + detailsAdded +
+                    ", existing " + detailsUnchanged +
+                    ", skipped " + detailsSkippedInvalidAccount);
+                Console.Out.Flush();
+            }
+        }
+
+        foreach (CampaignRecipient recipient in recipients
+                     .OrderBy(r => r.TargetKind)
+                     .ThenBy(r => r.AccountCode))
+        {
+            if (existingByContact.ContainsKey(recipient.AccountCode))
+            {
+                // Preserve any manual follow-up status or other edits made in
+                // Momentus if a failed import is being resumed.
+                detailsUnchanged++;
+                ReportDetailProgress();
+                continue;
+            }
+
+            CampaignDetailsModel detailToAdd = new CampaignDetailsModel
+            {
+                OrganizationCode = orgCode,
+                CampaignDesignation = CAMPAIGN_DESIGNATION,
+                Campaign = campaign.ID,
+                Account = recipient.AccountCode,
+                Status = recipient.Status,
+                EmailsSent = recipient.EmailsSent
+            };
+
+            CampaignDetailsModel added;
+            try
+            {
+                added = apiClient.Endpoints.CampaignDetails.Add(detailToAdd);
+            }
+            catch (Exception ex) when (IsMomentusAccountNotFound(ex) ||
+                                       IsMomentusInvalidAccount(ex))
+            {
+                detailsSkippedInvalidAccount++;
+                Console.WriteLine(
+                    "Skipping campaign detail for invalid account: " +
+                    recipient.AccountCode);
+                ReportDetailProgress();
+                continue;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    "Could not add campaign detail for account " +
+                    recipient.AccountCode + ".",
+                    ex);
+            }
+            if (added == null)
+            {
+                throw new InvalidOperationException(
+                    "Momentus did not confirm campaign detail creation for contact " +
+                    recipient.AccountCode + ". Do not rerun until the campaign is reviewed.");
+            }
+            detailsAdded++;
+            ReportDetailProgress();
+        }
+
+        return new CampaignSyncResult
+        {
+            CampaignId = campaign.ID,
+            ReusedExistingCampaign = reusedExisting,
+            DetailsAdded = detailsAdded,
+            DetailsUpdated = 0,
+            DetailsUnchanged = detailsUnchanged,
+            DetailsSkippedInvalidAccount = detailsSkippedInvalidAccount
+        };
+    }
+
+    private static bool IsMomentusInvalidAccount(Exception exception)
+    {
+        if (exception.Message.IndexOf(
+                "account you have entered does not exist",
+                StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return true;
+        }
+
+        if (exception is AggregateException aggregateException)
+        {
+            return aggregateException.InnerExceptions.Any(IsMomentusInvalidAccount);
+        }
+
+        return exception.InnerException != null &&
+               IsMomentusInvalidAccount(exception.InnerException);
+    }
+
+    private static string BuildCampaignSummary(
+        string campaignTitle,
+        DateTime campaignSentDate,
+        int emailsSent)
+    {
+        return campaignTitle + " - Sent on " +
+               campaignSentDate.ToString("MMMM d, yyyy", CultureInfo.InvariantCulture) +
+               " - Emails sent: " + emailsSent;
     }
 
     // ========================================================================
@@ -845,7 +1445,7 @@ class Program
         return NoteUpsertResult.Added;
     }
 
-    private static string BuildEngagementNoteTitle(string campaignType, DateTime runDate)
+    private static string BuildEngagementTitle(string campaignType, DateTime campaignSentDate)
     {
         string safeCampaignType = (campaignType ?? "").Trim();
 
@@ -854,7 +1454,31 @@ class Program
             safeCampaignType = "Engagement";
         }
 
-        return safeCampaignType + " - " + runDate.ToString("yyyy-dd-MM");
+        return safeCampaignType + " - Sent on " +
+               campaignSentDate.ToString("MMMM d, yyyy", CultureInfo.InvariantCulture);
+    }
+
+    private static string BuildActivityEngagementText(
+        string campaignType,
+        DateTime campaignSentDate,
+        int opens,
+        int clicks)
+    {
+        string campaignTitle = (campaignType ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(campaignTitle))
+        {
+            campaignTitle = "Engagement";
+        }
+
+        return campaignTitle + " - opened " + DescribeActivityCount(opens) +
+               ", clicked " + DescribeActivityCount(clicks) +
+               ". Sent on " +
+               campaignSentDate.ToString("MMMM d, yyyy", CultureInfo.InvariantCulture) + ".";
+    }
+
+    private static string DescribeActivityCount(int count)
+    {
+        return count == 1 ? "1 time" : count + " times";
     }
 
     // ------------------------------------------------------------------------
@@ -1034,6 +1658,37 @@ class Program
         return 0;
     }
 
+    private static int GetSinglePreparedMetric(IEnumerable<int> values, string fieldName)
+    {
+        List<int> distinct = values.Distinct().ToList();
+        if (distinct.Count != 1)
+        {
+            throw new FormatException(
+                "The prepared file contains multiple values for " + fieldName + ". " +
+                "Use one Mailchimp campaign per import.");
+        }
+
+        return distinct[0];
+    }
+
+    private static DateTime ParseCampaignSentDate(string value)
+    {
+        DateTime parsed;
+        if (!DateTime.TryParseExact(
+                (value ?? "").Trim(),
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out parsed))
+        {
+            throw new FormatException(
+                "Campaign Sent Date is missing or invalid in prepared column M. " +
+                "Use the launcher to select the Mailchimp sent date.");
+        }
+
+        return parsed.Date;
+    }
+
     private static int ParseIntOrDefault(string value, int defaultValue)
     {
         int parsed;
@@ -1151,6 +1806,9 @@ class Program
         public string FirstName;
         public string LastName;
         public string ContactAccountCode;
+        public DateTime CampaignSentDate;
+        public int CampaignEmailsSent;
+        public int CampaignResponsePercentage;
 
         public string FullName
         {
@@ -1167,6 +1825,7 @@ class Program
         public int EventId;
         public string OrgAccountCode;
         public string CampaignType;
+        public DateTime CampaignSentDate;
         public string SalespersonName;
         public string SalespersonAccountCode;
         public string ClickTypeCode;
@@ -1257,6 +1916,52 @@ class Program
         public string Add3;
         public string Add4;
         public string Add5;
+    }
+
+    private sealed class CampaignRoster
+    {
+        public List<CampaignRecipient> Recipients { get; } = new List<CampaignRecipient>();
+        public List<SkippedCampaignRecipient> ContactsWithoutPrimaryAccounts { get; } =
+            new List<SkippedCampaignRecipient>();
+        public List<SkippedCampaignRecipient> SkippedMissingAccounts { get; } =
+            new List<SkippedCampaignRecipient>();
+        public Dictionary<string, string> ContactToOrgAccount { get; } =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed class SkippedCampaignRecipient
+    {
+        public string ContactAccountCode = "";
+        public int Opens;
+        public int Clicks;
+    }
+
+    private sealed class CampaignRecipient
+    {
+        public string AccountCode = "";
+        public string ContactAccountCode = "";
+        public string OrgAccountCode = "";
+        public string TargetKind = "";
+        public int Opens;
+        public int Clicks;
+        public int EmailsSent;
+        public string Status = "";
+    }
+
+    private sealed class CampaignSyncPlan
+    {
+        public CampaignsModel? ExistingCampaign;
+        public List<CampaignDetailsModel> ExistingDetails = new List<CampaignDetailsModel>();
+    }
+
+    private sealed class CampaignSyncResult
+    {
+        public string CampaignId = "";
+        public bool ReusedExistingCampaign;
+        public int DetailsAdded;
+        public int DetailsUpdated;
+        public int DetailsUnchanged;
+        public int DetailsSkippedInvalidAccount;
     }
 
     private enum NoteUpsertResult

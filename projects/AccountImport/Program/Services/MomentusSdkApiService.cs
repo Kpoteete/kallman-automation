@@ -206,6 +206,10 @@ public sealed class MomentusSdkApiService : IMomentusApiService
                 {
                     value = _config.CleanCountryForMomentus(value);
                 }
+                else if (string.Equals(apiField, "State", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = _config.CleanStateForMomentus(value);
+                }
 
                 SetRequired(model, apiField, value);
             }
@@ -304,6 +308,10 @@ public sealed class MomentusSdkApiService : IMomentusApiService
                     string.Equals(apiField, "Country", StringComparison.OrdinalIgnoreCase))
                 {
                     importValue = _config.CleanCountryForMomentus(importValue);
+                }
+                else if (string.Equals(apiField, "State", StringComparison.OrdinalIgnoreCase))
+                {
+                    importValue = _config.CleanStateForMomentus(importValue);
                 }
 
                 string currentValue = GetString(existing, apiField);
@@ -452,7 +460,7 @@ public sealed class MomentusSdkApiService : IMomentusApiService
 
                 if (existing is not null)
                 {
-                    return ApiWriteResult.Succeeded(cleanAccountCode, $"Affiliation/interest code '{cleanAffiliationCode}' already exists on AccountCode {cleanAccountCode}; add skipped.");
+                    return ApiWriteResult.SkippedResult(cleanAccountCode, $"Affiliation/interest code '{cleanAffiliationCode}' already exists on AccountCode {cleanAccountCode}; add skipped.");
                 }
             }
             catch
@@ -468,11 +476,31 @@ public sealed class MomentusSdkApiService : IMomentusApiService
                 AffiliationCode = cleanAffiliationCode
             };
 
-            await InvokeEndpointAsync(endpoint, "AddAsync", "Add", new object?[] { affiliation, null }, cancellationToken)
-                .ConfigureAwait(false);
+            try
+            {
+                await InvokeEndpointAsync(endpoint, "AddAsync", "Add", new object?[] { affiliation, null }, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsAffiliationAlreadyAdded(ex))
+            {
+                return ApiWriteResult.SkippedResult(cleanAccountCode, $"Affiliation/interest code '{cleanAffiliationCode}' already exists on AccountCode {cleanAccountCode}; add skipped.");
+            }
 
             return ApiWriteResult.Succeeded(cleanAccountCode, $"Affiliation/interest code '{cleanAffiliationCode}' added to AccountCode {cleanAccountCode}.");
         }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool IsAffiliationAlreadyAdded(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current.Message.Contains("affiliation has already been added", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return ex.ToString().Contains("affiliation has already been added", StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task<ApiWriteResult> ApplyImportIdToAccountAsync(
@@ -676,6 +704,10 @@ public sealed class MomentusSdkApiService : IMomentusApiService
                 string.Equals(apiField, "Country", StringComparison.OrdinalIgnoreCase))
             {
                 value = _config.CleanCountryForMomentus(value);
+            }
+            else if (string.Equals(apiField, "State", StringComparison.OrdinalIgnoreCase))
+            {
+                value = _config.CleanStateForMomentus(value);
             }
 
             SetRequired(model, apiField, value);

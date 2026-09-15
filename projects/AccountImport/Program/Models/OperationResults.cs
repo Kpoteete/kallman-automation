@@ -30,10 +30,12 @@ public sealed record ApiWriteResult(
     bool Success,
     string AccountCode,
     string Message,
-    string? ErrorMessage = null)
+    string? ErrorMessage = null,
+    bool Skipped = false)
 {
     public static ApiWriteResult Succeeded(string accountCode, string message) => new(true, accountCode, message);
     public static ApiWriteResult Failed(string errorMessage, string? message = null) => new(false, string.Empty, message ?? string.Empty, errorMessage);
+    public static ApiWriteResult SkippedResult(string accountCode, string message) => new(false, accountCode, message, null, true);
 }
 
 public sealed class ImportSummary

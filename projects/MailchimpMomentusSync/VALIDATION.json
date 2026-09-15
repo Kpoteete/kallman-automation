@@ -1,0 +1,59 @@
+{
+  "release": "2.4.0",
+  "catalog": {
+    "version": "2026.08.19.4",
+    "campaigns": 9,
+    "salespeople": 66,
+    "duplicate_names": {
+      "Sales Rep": 2,
+      "Lorena Troncoso": 2
+    },
+    "sha256": "2B5FEE76C35CA3D74C73670ACD1E699020C59C7AE570F340B572B1187B32F809"
+  },
+  "source": {
+    "powershell_files_checked": 3,
+    "csharp_files_checked": 1
+  },
+  "completion_fallback": {
+    "successful_log": {
+      "files_processed_successfully": 1,
+      "files_with_errors": 0,
+      "confirmed_success": true
+    },
+    "failed_log": {
+      "files_processed_successfully": 0,
+      "files_with_errors": 1,
+      "confirmed_success": false
+    },
+    "incomplete_log": {
+      "files_processed_successfully": null,
+      "files_with_errors": null,
+      "confirmed_success": false
+    }
+  },
+  "secret_scan": "passed",
+  "fixtures": {
+    "normal": {
+      "source_rows": 5,
+      "clicked_rows": 4,
+      "eligible_rows": 3,
+      "skipped_no_clicks": 1,
+      "skipped_missing_account": 1
+    },
+    "reordered": {
+      "source_rows": 5,
+      "clicked_rows": 4,
+      "eligible_rows": 3,
+      "skipped_no_clicks": 1,
+      "skipped_missing_account": 1
+    },
+    "sofex": {
+      "source_rows": 883,
+      "clicked_rows": 61,
+      "eligible_rows": 61,
+      "skipped_no_clicks": 822,
+      "skipped_missing_account": 0
+    }
+  },
+  "manifest_sha256": "56a5efb60d74dca16c433a3a61d5d421f75705a51020de6867152f1a46c29466"
+}

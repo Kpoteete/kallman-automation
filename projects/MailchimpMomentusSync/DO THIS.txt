@@ -1,0 +1,12 @@
+UPDATE IN 4 STEPS
+=================
+
+1. Close the Mailchimp sync app.
+2. Copy EVERYTHING in this folder into:
+   C:\kwi-automations\projects\MailchimpMomentusSync
+3. Click "Replace the files in the destination".
+4. Open "Run Mailchimp Sync.cmd".
+
+Done.
+
+Your saved API credentials do NOT need to be entered again.

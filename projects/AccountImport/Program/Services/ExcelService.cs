@@ -13,6 +13,7 @@ public sealed class ExcelService
         ("Account phone", "Phone"),
         ("Account Address", "Address1"),
         ("Account Postal Code", "PostalCode"),
+        ("Bio", "Bio"),
         ("Company Event Sales Status (P unless account in momentus is A)", "EventSalesStatus"),
         ("Type Code", "Type"),
         ("Company Market Segment major Code", "MarketSegmentMajor"),
@@ -45,6 +46,7 @@ public sealed class ExcelService
         ("Contact Last Name", "LastName"),
         ("Contact event Sales", "EventSalesStatus"),
         ("Contact Title", "Title"),
+        ("Bio", "Bio"),
         ("Contact Phone", "Phone"),
         ("Contact Mobile Phone", "Mobile"),
         ("Contact Email", "Email"),
@@ -266,87 +268,289 @@ public sealed class ExcelService
         Directory.CreateDirectory(Path.GetDirectoryName(outputWorkbookPath)!);
         using var workbook = new XLWorkbook();
 
-        var createdAccountCodes = new HashSet<string>(session.CreatedAccountCodes, StringComparer.OrdinalIgnoreCase);
-        var matchedAccountCodes = new HashSet<string>(session.MatchedAccountCodes, StringComparer.OrdinalIgnoreCase);
-        var createdContactCodes = new HashSet<string>(session.ContactCodesCreated, StringComparer.OrdinalIgnoreCase);
-        var duplicateContactCodes = new HashSet<string>(session.DuplicateContactCodesFound, StringComparer.OrdinalIgnoreCase);
+        var recordsByRow = auditRecords
+            .Where(r => r.RowNumber >= ColumnMap.FirstDataRow)
+            .GroupBy(r => r.RowNumber)
+            .ToDictionary(g => g.Key, g => g.ToList());
 
-        bool IsCreatedAccount(AuditRecord r) => !string.IsNullOrWhiteSpace(r.AccountCode) && createdAccountCodes.Contains(r.AccountCode);
-        bool IsMatchedAccount(AuditRecord r) => !string.IsNullOrWhiteSpace(r.AccountCode) && matchedAccountCodes.Contains(r.AccountCode);
-        bool IsCreatedContact(AuditRecord r) => !string.IsNullOrWhiteSpace(r.AccountCode) && createdContactCodes.Contains(r.AccountCode);
-        bool IsExistingContact(AuditRecord r) => !string.IsNullOrWhiteSpace(r.AccountCode) && duplicateContactCodes.Contains(r.AccountCode);
-
-        var accountsImported = auditRecords
-            .Where(r => r.ActionAttempted == "CreateOrganizationAccount" &&
-                        r.Result.Equals("Success", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        var accountsChanged = auditRecords
-            .Where(r => r.Result.Equals("Success", StringComparison.OrdinalIgnoreCase))
-            .Where(r =>
-                r.ActionAttempted == "FillBlankOrganizationFields" ||
-                ((r.ActionAttempted == "ApplyImportIdKeyword" || r.ActionAttempted == "AddAffiliation") &&
-                    IsMatchedAccount(r) && !IsCreatedAccount(r)))
-            .ToList();
-
-        var accountsChangedCodes = new HashSet<string>(accountsChanged
-            .Select(r => r.AccountCode)
-            .Where(code => !string.IsNullOrWhiteSpace(code)), StringComparer.OrdinalIgnoreCase);
-
-        var accountsNotImported = auditRecords
-            .Where(r =>
-                (r.ActionAttempted == "SearchOrganizationAccount" &&
-                    (
-                        r.Result.Equals("Failed", StringComparison.OrdinalIgnoreCase) ||
-                        r.Result.Equals("Skipped", StringComparison.OrdinalIgnoreCase) ||
-                        (r.Result.Equals("Success", StringComparison.OrdinalIgnoreCase) &&
-                            !string.IsNullOrWhiteSpace(r.AccountCode) &&
-                            !accountsChangedCodes.Contains(r.AccountCode))
-                    )) ||
-                (r.ActionAttempted == "CreateOrganizationAccount" &&
-                    !r.Result.Equals("Success", StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-
-        var contactsImported = auditRecords
-            .Where(r => r.ActionAttempted == "CreateContact" &&
-                        r.Result.Equals("Success", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        var contactsChanged = auditRecords
-            .Where(r => r.Result.Equals("Success", StringComparison.OrdinalIgnoreCase))
-            .Where(r =>
-                (r.ActionAttempted == "ApplyImportIdKeyword" || r.ActionAttempted == "AddAffiliation") &&
-                IsExistingContact(r) && !IsCreatedContact(r))
-            .ToList();
-
-        var contactsChangedCodes = new HashSet<string>(contactsChanged
-            .Select(r => r.AccountCode)
-            .Where(code => !string.IsNullOrWhiteSpace(code)), StringComparer.OrdinalIgnoreCase);
-
-        var contactsNotImported = auditRecords
-            .Where(r =>
-                (r.ActionAttempted == "SearchContactByEmail" &&
-                    (
-                        r.Result.Equals("Failed", StringComparison.OrdinalIgnoreCase) ||
-                        r.Result.Equals("Skipped", StringComparison.OrdinalIgnoreCase) ||
-                        (r.Result.Equals("Success", StringComparison.OrdinalIgnoreCase) &&
-                            !string.IsNullOrWhiteSpace(r.AccountCode) &&
-                            !contactsChangedCodes.Contains(r.AccountCode))
-                    )) ||
-                (r.ActionAttempted == "CreateContact" &&
-                    !r.Result.Equals("Success", StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-
-        AddAuditSheet(workbook, "Accounts Imported", accountsImported);
-        AddAuditSheet(workbook, "Accounts Changed", accountsChanged);
-        AddAuditSheet(workbook, "Accounts Not Imported", accountsNotImported);
-        AddAuditSheet(workbook, "Contacts Imported", contactsImported);
-        AddAuditSheet(workbook, "Contacts Changed", contactsChanged);
-        AddAuditSheet(workbook, "Contacts Not Imported", contactsNotImported);
+        var summarySheet = workbook.Worksheets.Add("Summary");
+        var statusSheet = workbook.Worksheets.Add("Line Status");
+        AddLineStatusSheet(statusSheet, session, recordsByRow);
+        AddLineStatusSummarySheet(summarySheet, session, statusSheet);
+        AddAuditSheet(workbook, "Raw Audit", auditRecords);
 
         workbook.SaveAs(outputWorkbookPath);
         return outputWorkbookPath;
     }
+
+    private static void AddLineStatusSheet(
+        IXLWorksheet statusSheet,
+        SessionContext session,
+        IReadOnlyDictionary<int, List<AuditRecord>> recordsByRow)
+    {
+        using var sourceWorkbook = new XLWorkbook(session.Phase0SourceFile);
+        var sourceSheet = sourceWorkbook.Worksheets.First();
+
+        int lastSourceRow = sourceSheet.LastRowUsed()?.RowNumber() ?? ColumnMap.HeaderFriendlyRow;
+        int lastSourceColumn = sourceSheet.LastColumnUsed()?.ColumnNumber() ?? ColumnMap.ContactEmail;
+
+        string[] statusHeaders =
+        {
+            "Source Row",
+            "Status",
+            "What happened",
+            "Manual action needed"
+        };
+
+        for (int c = 0; c < statusHeaders.Length; c++)
+        {
+            statusSheet.Cell(1, c + 1).SetValue(statusHeaders[c]);
+        }
+
+        for (int sourceCol = 1; sourceCol <= lastSourceColumn; sourceCol++)
+        {
+            string header = GetString(sourceSheet, ColumnMap.HeaderFriendlyRow, sourceCol);
+            if (string.IsNullOrWhiteSpace(header))
+            {
+                header = GetString(sourceSheet, ColumnMap.HeaderApiRow, sourceCol);
+            }
+
+            if (string.IsNullOrWhiteSpace(header))
+            {
+                header = $"Column {ColumnLetter(sourceCol)}";
+            }
+
+            statusSheet.Cell(1, statusHeaders.Length + sourceCol).SetValue(header);
+        }
+
+        int outputRow = 2;
+        for (int sourceRow = ColumnMap.FirstDataRow; sourceRow <= lastSourceRow; sourceRow++)
+        {
+            if (IsBlankDataRow(sourceSheet, sourceRow)) continue;
+
+            recordsByRow.TryGetValue(sourceRow, out List<AuditRecord>? rowRecords);
+            LineStatus lineStatus = BuildLineStatus(rowRecords ?? new List<AuditRecord>());
+
+            statusSheet.Cell(outputRow, 1).SetValue(sourceRow);
+            statusSheet.Cell(outputRow, 2).SetValue(lineStatus.Status);
+            statusSheet.Cell(outputRow, 3).SetValue(lineStatus.WhatHappened);
+            statusSheet.Cell(outputRow, 4).SetValue(lineStatus.ManualAction);
+
+            for (int sourceCol = 1; sourceCol <= lastSourceColumn; sourceCol++)
+            {
+                statusSheet.Cell(outputRow, statusHeaders.Length + sourceCol).Value = sourceSheet.Cell(sourceRow, sourceCol).Value;
+            }
+
+            outputRow++;
+        }
+
+        FormatLineStatusSheet(statusSheet);
+    }
+
+    private static LineStatus BuildLineStatus(IReadOnlyList<AuditRecord> records)
+    {
+        if (records.Count == 0)
+        {
+            return new LineStatus(
+                "Skipped / no action",
+                "No audit action was logged for this source row.",
+                "Review manually if this row was expected to import.");
+        }
+
+        var seriousFailures = records
+            .Where(r => IsResult(r, "Failed") && !IsAlreadyAddedAffiliation(r))
+            .ToList();
+        var skipped = records.Where(r => IsResult(r, "Skipped")).ToList();
+        var seriousSkipped = skipped.Where(r => !IsBenignSkipped(r)).ToList();
+        var successes = records.Where(r => IsResult(r, "Success")).ToList();
+
+        string whatHappened = string.Join(Environment.NewLine, records
+            .Select(DescribeAuditAction)
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+
+        if (seriousFailures.Count > 0)
+        {
+            string errorMessages = JoinMessages(seriousFailures.Select(r => r.ErrorMessage));
+            string manualAction = seriousFailures.Any(r => r.ErrorMessage.Contains("invalid country", StringComparison.OrdinalIgnoreCase))
+                ? "Fix the Momentus country/state/city mapping for this row, then rerun or update manually."
+                : "Review the failure message and update manually if the row did not import.";
+
+            if (!string.IsNullOrWhiteSpace(errorMessages))
+            {
+                manualAction += Environment.NewLine + Environment.NewLine + "System message: " + errorMessages;
+            }
+
+            return new LineStatus("Needs manual update", whatHappened, manualAction);
+        }
+
+        if (seriousSkipped.Count > 0)
+        {
+            string messages = JoinMessages(seriousSkipped.Select(r => r.ErrorMessage).Concat(seriousSkipped.Select(r => r.MomentusResponseMessage)));
+            string manualAction = string.IsNullOrWhiteSpace(messages)
+                ? "Review this row before rerun/manual update."
+                : "Review this row before rerun/manual update. " + messages;
+            return new LineStatus("Skipped / no action", whatHappened, manualAction);
+        }
+
+        if (records.Any(r =>
+                IsSuccessAction(r, "CreateOrganizationAccount") ||
+                IsSuccessAction(r, "CreateContact")))
+        {
+            return new LineStatus("Imported / created", whatHappened, "No manual update needed based on this run.");
+        }
+
+        if (records.Any(r =>
+                IsSuccessAction(r, "FillBlankOrganizationFields") ||
+                IsSuccessAction(r, "ApplyImportIdKeyword") ||
+                IsSuccessAction(r, "AddAffiliation") ||
+                IsSuccessAction(r, "SearchContactByEmail") ||
+                IsSuccessAction(r, "SearchOrganizationAccount") ||
+                IsAlreadyAddedAffiliation(r)))
+        {
+            return new LineStatus("Already existed / updated", whatHappened, "No manual update needed based on this run.");
+        }
+
+        return new LineStatus("Skipped / no action", whatHappened, "Review manually if this row was expected to import.");
+    }
+
+    private static string DescribeAuditAction(AuditRecord record)
+    {
+        if (IsSuccessAction(record, "SearchContactByEmail")) return "Contact already existed or was found by email.";
+        if (IsSuccessAction(record, "SearchOrganizationAccount")) return "Company account already existed or was found.";
+        if (IsSuccessAction(record, "CreateOrganizationAccount")) return "Company account was created.";
+        if (IsResult(record, "Skipped") && record.ActionAttempted.Equals("CreateOrganizationAccount", StringComparison.OrdinalIgnoreCase))
+            return "Company account creation was skipped because the run reused an account from another line.";
+        if (IsSuccessAction(record, "CreateContact")) return "Contact was created.";
+        if (IsSuccessAction(record, "FillBlankOrganizationFields")) return "Blank existing company fields were updated.";
+        if (IsSuccessAction(record, "ApplyImportIdKeyword")) return "Import ID tag was applied.";
+        if (IsSuccessAction(record, "AddAffiliation")) return "Affiliation/interest was added.";
+        if (IsAlreadyAddedAffiliation(record)) return "Affiliation/interest was already on the record.";
+        if (IsResult(record, "Skipped")) return "Skipped during " + record.ActionAttempted + ".";
+        if (IsResult(record, "Failed")) return "Failed during " + record.ActionAttempted + ".";
+        return record.ActionAttempted + ": " + record.Result;
+    }
+
+    private static void AddLineStatusSummarySheet(IXLWorksheet summarySheet, SessionContext session, IXLWorksheet statusSheet)
+    {
+        summarySheet.Cell(1, 1).SetValue("Import Line Status Handoff");
+        summarySheet.Cell(2, 1).SetValue("Source workbook");
+        summarySheet.Cell(2, 2).SetValue(session.Phase0SourceFile);
+        summarySheet.Cell(3, 1).SetValue("Audit file");
+        summarySheet.Cell(3, 2).SetValue(session.Phase4AuditLogFile);
+        summarySheet.Cell(5, 1).SetValue("Status");
+        summarySheet.Cell(5, 2).SetValue("Count");
+
+        var counts = statusSheet.RowsUsed()
+            .Skip(1)
+            .Select(row => row.Cell(2).GetString())
+            .Where(status => !string.IsNullOrWhiteSpace(status))
+            .GroupBy(status => status, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+        string[] statuses =
+        {
+            "Imported / created",
+            "Already existed / updated",
+            "Needs manual update",
+            "Skipped / no action"
+        };
+
+        for (int i = 0; i < statuses.Length; i++)
+        {
+            summarySheet.Cell(6 + i, 1).SetValue(statuses[i]);
+            summarySheet.Cell(6 + i, 2).SetValue(counts.TryGetValue(statuses[i], out int count) ? count : 0);
+        }
+
+        summarySheet.Cell(12, 1).SetValue("How to use this");
+        summarySheet.Cell(13, 1).SetValue("Send the Line Status tab back to the requester. Rows marked Needs manual update or Skipped / no action need human review before rerun/manual entry.");
+
+        summarySheet.Range("A1:B1").Merge();
+        summarySheet.Cell(1, 1).Style.Font.SetBold().Font.SetFontSize(16).Font.SetFontColor(XLColor.FromHtml("#17365D"));
+        summarySheet.Range("A5:B5").Style.Font.SetBold().Fill.SetBackgroundColor(XLColor.FromHtml("#17365D"));
+        summarySheet.Range("A5:B5").Style.Font.SetFontColor(XLColor.White);
+        summarySheet.Range("A13:B13").Merge();
+        summarySheet.Columns().AdjustToContents();
+        summarySheet.Column(2).Width = Math.Min(summarySheet.Column(2).Width, 90);
+        summarySheet.Rows().Style.Alignment.WrapText = true;
+    }
+
+    private static void FormatLineStatusSheet(IXLWorksheet worksheet)
+    {
+        worksheet.SheetView.FreezeRows(1);
+        worksheet.SheetView.FreezeColumns(4);
+        worksheet.RangeUsed()?.SetAutoFilter();
+
+        var used = worksheet.RangeUsed();
+        if (used is null) return;
+
+        used.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        used.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+        used.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
+        used.Style.Alignment.WrapText = true;
+
+        var header = worksheet.Row(1);
+        header.Style.Font.Bold = true;
+        header.Style.Fill.BackgroundColor = XLColor.FromHtml("#17365D");
+        header.Style.Font.FontColor = XLColor.White;
+        header.Height = 30;
+
+        worksheet.Column(1).Width = 11;
+        worksheet.Column(2).Width = 24;
+        worksheet.Column(3).Width = 52;
+        worksheet.Column(4).Width = 68;
+
+        int lastColumn = worksheet.LastColumnUsed()?.ColumnNumber() ?? 4;
+        for (int col = 5; col <= lastColumn; col++)
+        {
+            worksheet.Column(col).AdjustToContents();
+            worksheet.Column(col).Width = Math.Min(Math.Max(worksheet.Column(col).Width, 12), 34);
+        }
+
+        int lastRow = worksheet.LastRowUsed()?.RowNumber() ?? 1;
+        for (int row = 2; row <= lastRow; row++)
+        {
+            string status = worksheet.Cell(row, 2).GetString();
+            XLColor fill = status switch
+            {
+                "Imported / created" => XLColor.FromHtml("#E2F0D9"),
+                "Already existed / updated" => XLColor.FromHtml("#DDEBF7"),
+                "Needs manual update" => XLColor.FromHtml("#FCE4D6"),
+                "Skipped / no action" => XLColor.FromHtml("#FFF2CC"),
+                _ => XLColor.White
+            };
+
+            worksheet.Row(row).Style.Fill.BackgroundColor = fill;
+            worksheet.Row(row).Height = 72;
+        }
+    }
+
+    private static bool IsSuccessAction(AuditRecord record, string action) =>
+        IsResult(record, "Success") &&
+        record.ActionAttempted.Equals(action, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsResult(AuditRecord record, string result) =>
+        record.Result.Equals(result, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAlreadyAddedAffiliation(AuditRecord record) =>
+        record.ActionAttempted.Equals("AddAffiliation", StringComparison.OrdinalIgnoreCase) &&
+        (record.ErrorMessage.Contains("affiliation has already been added", StringComparison.OrdinalIgnoreCase) ||
+         record.MomentusResponseMessage.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
+         record.MomentusResponseMessage.Contains("add skipped", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsBenignSkipped(AuditRecord record) =>
+        IsAlreadyAddedAffiliation(record) ||
+        (record.ActionAttempted.Equals("CreateOrganizationAccount", StringComparison.OrdinalIgnoreCase) &&
+            record.MomentusResponseMessage.Contains("reused", StringComparison.OrdinalIgnoreCase)) ||
+        record.MomentusResponseMessage.Contains("DRY_RUN", StringComparison.OrdinalIgnoreCase);
+
+    private static string JoinMessages(IEnumerable<string> messages) =>
+        string.Join(" | ", messages
+            .Select(TextUtil.Clean)
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+
+    private sealed record LineStatus(string Status, string WhatHappened, string ManualAction);
 
     private static void AddAuditSheet(XLWorkbook workbook, string sheetName, IReadOnlyList<AuditRecord> records)
     {

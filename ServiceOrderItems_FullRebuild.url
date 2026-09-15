@@ -1,0 +1,38 @@
+[1mdiff --git a/sharepoint/BoothAvailabilitySync/appsettings.json b/sharepoint/BoothAvailabilitySync/appsettings.json[m
+[1mnew file mode 100644[m
+[1mindex 0000000..c2295bc[m
+[1m--- /dev/null[m
+[1m+++ b/sharepoint/BoothAvailabilitySync/appsettings.json[m
+[36m@@ -0,0 +1,32 @@[m
+[32m+[m[32m{[m
+[32m+[m[32m  "InputFile": "C:\\Users\\kylep\\Kallman Worldwide, Inc\\Data Warehouse - Documents\\Booths_Pull.csv",[m
+[32m+[m[32m  "StateFolder": "state",[m
+[32m+[m[32m  "SharePoint": {[m
+[32m+[m[32m    "Hostname": "kallmanworldwideinc.sharepoint.com",[m
+[32m+[m[32m    "SitePath": "/sites/IT",[m
+[32m+[m[32m    "ListName": "Event Portals and Links",[m
+[32m+[m[32m    "EventIdColumn": "Event ID",[m
+[32m+[m[32m    "AvailableBoothsColumn": "Available Booths",[m
+[32m+[m[32m    "AvailableAreaColumn": "Available Area",[m
+[32m+[m[32m    "SoldBoothsColumn": "Sold Booths",[m
+[32m+[m[32m    "AreaSoldColumn": "Area Sold",[m
+[32m+[m[32m    "BoothsOnHoldColumn": "Booths on Hold",[m
+[32m+[m[32m    "LastUpdatedColumn": "Booth Availability Last Updated",[m
+[32m+[m[32m    "RefreshLastUpdatedOnEveryMatchedEvent": true[m
+[32m+[m[32m  },[m
+[32m+[m[32m  "Auth": {[m
+[32m+[m[32m    "Mode": "InteractiveBrowser",[m
+[32m+[m[32m    "TenantId": "kallmanworldwideinc.onmicrosoft.com",[m
+[32m+[m[32m    "ClientId": "bb448ae9-f363-4662-be0c-0d42b6df20ca",[m
+[32m+[m[32m    "RedirectUri": "http://localhost",[m
+[32m+[m[32m    "CertificateThumbprint": "",[m
+[32m+[m[32m    "CertificateStoreLocation": "CurrentUser"[m
+[32m+[m[32m  },[m
+[32m+[m[32m  "Safety": {[m
+[32m+[m[32m    "MaximumFileAgeHours": 24,[m
+[32m+[m[32m    "MinimumRawRows": 1000,[m
+[32m+[m[32m    "MaximumUniqueBoothDropPercent": 40,[m
+[32m+[m[32m    "StopIfAvailableBoothsDropToZero": true,[m
+[32m+[m[32m    "StopIfSoldBoothsDropToZero": true[m
+[32m+[m[32m  }[m
+[32m+[m[32m}[m

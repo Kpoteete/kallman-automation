@@ -1,0 +1,60 @@
+BUILD / TEST STATUS
+===================
+Release: 3.3.0
+Built-in catalog: 2026.08.19.4
+
+Validated in this environment:
+
+- Multi-file DataGridView queue with add and remove row controls
+- Per-row File, Campaign Name, Sent Date, Event ID, Campaign Type, Salesperson,
+  and CSV review fields
+- Sequential isolated runs with queue position shown in the progress window
+- Stop-on-error behavior that leaves later rows unstarted
+- 9 approved Campaign Type / activity-code mappings
+- 66 salesperson mappings
+- New required CAMPAIGN free-text field in the launcher source
+- New CAMPAIGN SENT DATE picker in the launcher source
+- Campaign text written to internal prepared CSV column B for the note
+- Selected sent date written to internal prepared CSV column M
+- Friendly campaign-and-sent-date Momentus activity subject/text
+- Exhibitor note headings use the selected sent date
+- Only opened/clicked contacts retained for campaign details
+- Full Mailchimp population retained for Emails Sent and response percentage
+- Engaged contacts with no Primary Account retained as campaign details while
+  organization-dependent work is skipped
+- Contact codes not found in Momentus skipped and recorded separately
+- Non-account-not-found lookup errors remain fatal during read-only preflight
+- Engaged campaign contacts classified as OPE or CLI
+- Campaign details contain engaged contacts only
+- Engaged contacts without Primary Accounts remain in the campaign
+- Exhibitor organizations remain limited to exhibitor/activity/note processing
+- Event Sales campaign fields populated from the launcher and calculated metrics
+- Campaign endpoints checked read-only before existing write phases
+- Campaign and detail creation runs as the final Momentus write phase
+- Exact partial campaign recovery preserves existing manual detail statuses
+- Existing campaign details are paged beyond the 1,000-row API limit
+- Invalid organization campaign details are skipped without ending recovery
+- Exhibitor progress is written incrementally to the audit and output log
+- Live progress window shows phases, counts, current org account, and recent log lines
+- Campaign Type used for Click/Open codes
+- Automatic migration of older saved campaign catalogs
+- Preservation of saved salesperson mappings during migration
+- Header-based raw Mailchimp parsing
+- Click-only filtering
+- Synthetic fixtures cover ignored No Interaction, Opened, Opened and Clicked,
+  click-with-zero-opens, missing account code, and reordered CSV columns
+- Blank-exit-code success fallback from release 2.3
+- Safe-preflight failures clearly reported as making no live changes
+- Windows PowerShell parse and C# structural checks
+- .NET 10 Release build and self-contained win-x64 package build
+- Credential-like hardcoded value scan
+- Source manifest generation
+
+Not executed because this verification intentionally made no live Momentus
+changes:
+
+- Live Momentus API import
+- Live validation that the configured I, OPE, and CLI detail-status codes are
+  accepted by this Momentus environment
+
+The package is intended as a drop-in update to the existing Windows project.

@@ -1,0 +1,97 @@
+KALLMAN MAILCHIMP TO MOMENTUS SYNC - QA REPORT
+==============================================
+Release: 3.3.0
+Date: 2026-08-24
+
+CHANGES CHECKED
+
+PASS - Main screen uses one editable grid row per campaign file.
+PASS - Add another file and Remove controls manage queue rows.
+PASS - Every row contains File, Campaign Name, Sent Date, Event ID,
+       Campaign Type, Salesperson, and CSV review values.
+PASS - New rows inherit Event ID and Salesperson while retaining independent
+       file, campaign, date, and campaign-type choices.
+PASS - Queue confirmation summarizes every planned live import.
+PASS - Queue runs each file sequentially in its own isolated audit folder.
+PASS - A failed row prevents later queue rows from starting.
+PASS - Progress windows identify the current file number and total queue size.
+PASS - Main screen contains a required free-text CAMPAIGN field.
+PASS - Main screen contains a CAMPAIGN SENT DATE picker.
+PASS - CAMPAIGN TYPE remains a separate dropdown.
+PASS - User-entered CAMPAIGN is written to prepared CSV column B.
+PASS - Selected sent date is written to prepared CSV column M in ISO format.
+PASS - Exhibitor note headings use CAMPAIGN and the selected sent date.
+PASS - Existing per-contact note lines remain in their previous format.
+PASS - Activity subjects use CAMPAIGN and the selected sent date instead of codes.
+PASS - Activity text clearly shows opened count, clicked count, and sent date.
+PASS - Prepared import retains only opened/clicked campaign contacts.
+PASS - No-interaction recipients are excluded from Momentus account lookups and details.
+PASS - Emails Sent and response percentage still use every Mailchimp source row.
+PASS - A contact with no Primary Account remains a campaign detail.
+PASS - No-Primary-Account contacts skip organization-dependent engagement work.
+PASS - A contact account not found in Momentus is also skipped and audited.
+PASS - Other account API errors still stop before the first live write.
+PASS - Existing exhibitor/activity/note pipeline remains click-only.
+PASS - Campaign statuses classify engaged contacts as OPE or CLI with click precedence.
+PASS - Campaign population includes engaged contacts only.
+PASS - Exhibitor organizations do not create additional OPE or CLI details.
+PASS - Engaged contacts without Primary Accounts remain campaign details.
+PASS - Those contacts are excluded only from organization-dependent work.
+PASS - Campaign uses the Event Sales designation SDK constant and auto ID.
+PASS - Description, Event, Coordinator, Emails Sent, response percentage,
+       Summary, Start Date, and End Date are populated; Group is left blank.
+PASS - Campaign API read checks occur before existing live write phases.
+PASS - Campaign creation occurs after exhibitor, activity, and note processing.
+PASS - A partial exact campaign can be resumed without overwriting existing
+       detail rows or manual follow-up statuses.
+PASS - Existing campaign detail searches follow every API results page.
+PASS - An invalid organization account is skipped during campaign-detail add.
+PASS - Other campaign-detail errors include the failing account code and stop.
+PASS - Exhibitor audit progress is persisted before final campaign completion.
+PASS - Progress window displays live phase and recent engine-output details.
+PASS - CAMPAIGN TYPE supplies ClickType and OpenType only.
+PASS - Official campaign catalog contains exactly 9 approved mappings.
+PASS - Salesperson catalog retains 66 supplied mappings.
+PASS - Older user-managed campaign catalogs auto-upgrade to the new campaign list.
+PASS - User-managed salesperson mappings are preserved during catalog upgrade.
+PASS - Manage Lists remains available for later edits.
+PASS - Blank-exit-code success handling from v2.3 is retained.
+PASS - Preflight failures that made no live changes show a safe-to-rerun message.
+PASS - Raw Mailchimp parsing is header based and click only.
+PASS - Credential-like hardcoded values were not found by the project secret scan.
+PASS - Windows PowerShell parse and C# delimiter/structure checks passed.
+PASS - .NET 10 Release build completed with no errors.
+PASS - Self-contained Windows x64 package was created.
+
+SYNTHETIC STATUS FIXTURE
+
+Total rows: 6
+Source contacts with Account Code: 5
+Engaged campaign contacts: 4
+Clicked activity/note rows: 3
+No Interaction ignored: 1
+Opened (OPE): 1
+Opened and Clicked (CLI): 3
+Rows missing Account Code: 1
+Calculated response percentage: 83
+
+APPROVED CAMPAIGN MAPPINGS
+
+Launch Email              Open LMO   Click LMC
+Sponsorship Mailing       Open 1SO   Click 1SC
+Portfolio Mailing         Open PMO   Click PMC
+Blast email #1            Open CO2   Click CC2
+Blast email #2            Open 6MO   Click 6MC
+Blast email #3            Open 1YO   Click 1YC
+Blast email #4            Open 3MO   Click 3MC
+Blast email #5            Open CMO   Click CMC
+Last call mailer          Open LCO   Click LCC
+
+LIMITATION
+
+The new 3.3.0 queue screen was smoke-tested with a sample CSV but was not used to
+submit a live batch during QA. The same underlying 3.2.0 engine completed three
+live imports during this work, including the queued Webinar and Launch files,
+with OPE/CLI details and zero engine errors. The 3.3.0 launcher was additionally
+validated through source checks, Windows PowerShell parsing, .NET compilation,
+release packaging, CSV fixtures, and a real WinForms load-and-close test.

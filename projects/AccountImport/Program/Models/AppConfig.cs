@@ -30,7 +30,10 @@ public sealed class AppConfig
         ["United States of America"] = "***",
         ["ARG"] = "AR",
         ["ARE"] = "AE",
-        ["CAN"] = "CA",
+        ["CA"] = "Canada",
+        ["CAN"] = "Canada",
+        ["Can"] = "Canada",
+        ["Canada"] = "Canada",
         ["CHE"] = "CH",
         ["GBR"] = "GB",
         ["NLD"] = "NL",
@@ -42,6 +45,17 @@ public sealed class AppConfig
         ["UAE"] = "AE",
         ["U.A.E."] = "AE",
         ["United Arab Emirates"] = "AE"
+    };
+    public Dictionary<string, string> StateAliases { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["QC"] = "Quebec (QC)",
+        ["QC|Can"] = "Quebec (QC)",
+        ["Quebec"] = "Quebec (QC)",
+        ["Quebec (QC)"] = "Quebec (QC)",
+        ["ON"] = "Ontario (ON)",
+        ["ON|Can"] = "Ontario (ON)",
+        ["Ontario"] = "Ontario (ON)",
+        ["Ontario (ON)"] = "Ontario (ON)"
     };
 
     public string ProgramFolder => Path.Combine(RootPath, "Program");
@@ -70,9 +84,40 @@ public sealed class AppConfig
     {
         string clean = TextUtil.CleanKeyField(rawCountry);
         if (string.IsNullOrWhiteSpace(clean)) return string.Empty;
+        int pipeIndex = clean.IndexOf('|', StringComparison.Ordinal);
+        if (pipeIndex >= 0)
+        {
+            clean = clean[(pipeIndex + 1)..].Trim();
+        }
+
         if (CountryAliases.TryGetValue(clean, out string? mapped)) return mapped;
 
         foreach (var kvp in CountryAliases)
+        {
+            if (string.Equals(TextUtil.CleanKeyField(kvp.Key), clean, StringComparison.OrdinalIgnoreCase))
+            {
+                return TextUtil.CleanKeyField(kvp.Value);
+            }
+        }
+
+        return clean;
+    }
+
+    public string CleanStateForMomentus(string? rawState)
+    {
+        string clean = TextUtil.CleanKeyField(rawState);
+        if (string.IsNullOrWhiteSpace(clean)) return string.Empty;
+        if (StateAliases.TryGetValue(clean, out string? mapped)) return mapped;
+
+        int pipeIndex = clean.IndexOf('|', StringComparison.Ordinal);
+        if (pipeIndex > 0)
+        {
+            string stateOnly = clean[..pipeIndex].Trim();
+            if (StateAliases.TryGetValue(stateOnly, out mapped)) return mapped;
+            return stateOnly;
+        }
+
+        foreach (var kvp in StateAliases)
         {
             if (string.Equals(TextUtil.CleanKeyField(kvp.Key), clean, StringComparison.OrdinalIgnoreCase))
             {
