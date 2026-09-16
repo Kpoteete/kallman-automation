@@ -1,0 +1,4 @@
+Build fix 2026-09-14
+
+Fixed CS0173 in SyncPlanner.cs by explicitly typing normalizedOld as decimal?.
+No configuration changes are required.

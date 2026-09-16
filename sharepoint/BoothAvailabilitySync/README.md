@@ -1,79 +1,57 @@
-# KWI Booth Availability Sync
+# KWI Event Portal SharePoint Sync
 
-Reads the Momentus booth warehouse CSV and updates booth inventory metrics on the SharePoint list **Event Portals and Links**.
+This utility keeps the SharePoint **Event Portals and Links** list synchronized from two Kallman data-warehouse CSV exports.
 
-## Source
+## Sources
 
-`C:\Users\kylep\Kallman Worldwide, Inc\Data Warehouse - Documents\Booths\_Pull.csv`
+### Booths_Pull.csv
+Matched by:
 
-## Match key
+- CSV `Event` -> SharePoint `Event ID`
+- Unique booth key = `Event + Booth`
+- If duplicate booth rows exist, the row with the newest `ChangedOn` is used.
 
-- CSV: `Event`
-- SharePoint: `Event ID`
+Updates:
 
-Booths are deduplicated by **Event + Booth** before any metric is calculated. If multiple CSV rows exist for the same Event + Booth, the row with the newest `ChangedOn` wins. `SequenceNumber` is the tie-breaker when `ChangedOn` is identical.
+- `Available Booths` = count where `BoothStatus = AV`
+- `Available Area` = sum `GrossArea` where `BoothStatus = AV`
+- `Sold Booths` = count where `BoothStatus = RE` or `30`
+- `Area Sold` = sum `GrossArea` where `BoothStatus = RE` or `30`
+- `Booths on Hold` = count where `BoothStatus = 20`
+- `Booth Availability Last Updated` = refreshed for matched booth events
 
-## Metrics
+### Events_Pull.csv
+Matched by:
 
-- **Available Booths** = count of current booth records with `BoothStatus = AV`
-- **Available Area** = sum of `GrossArea` for `AV`
-- **Sold Booths** = count with `BoothStatus = RE` or `30`
-- **Area Sold** = sum of `GrossArea` for `RE` or `30`
-- **Booths on Hold** = count with `BoothStatus = 20`
-- **Booth Availability Last Updated** = UTC timestamp of the successful SharePoint processing attempt for each matched event
+- CSV `EventID` -> SharePoint `Event ID`
 
-## SharePoint
+Updates:
 
-- Host: `kallmanworldwideinc.sharepoint.com`
-- Site: `/sites/IT`
-- List: `Event Portals and Links`
+| Events_Pull.csv | SharePoint |
+|---|---|
+| `StartDate` | `Start Date` |
+| `EndDate` | `End Date` |
+| `EventUserFieldSets[0].UserText10` | `City` |
+| `EventUserFieldSets[0].UserText11` | `Country` |
+| `Class` | `Subclass` |
 
-The program discovers SharePoint internal field names from the configured display names. You do not need to hard-code names such as `Event_x0020_ID`.
-
-## Run
-
-### Safe preview
-
-Double-click:
-
-`preview.bat`
-
-Preview reads the CSV and SharePoint list and prints exactly which booth metrics differ. It does not update SharePoint.
-
-### Live update
-
-After preview looks correct, double-click:
-
-`sync.bat`
+Blank values in Events_Pull.csv intentionally clear the corresponding SharePoint field so SharePoint mirrors Momentus.
 
 ## Safety behavior
 
-The sync stops before SharePoint writes when:
+- Preview never writes to SharePoint.
+- Sync stops if either CSV is missing, stale, malformed, or fails configured minimum-data checks.
+- SharePoint items are never created automatically.
+- Duplicate SharePoint Event IDs are skipped and flagged.
+- Events in the CSV but not in SharePoint are logged and skipped.
+- SharePoint events missing from a source CSV are logged and left unchanged for that source.
+- Only changed fields are written, except `Booth Availability Last Updated`, which can be refreshed for every matched booth event.
 
-- the CSV is missing or empty;
-- required CSV columns are missing;
-- the CSV has fewer than the configured minimum rows;
-- the file is older than the configured limit;
-- unique Event + Booth inventory drops more than the configured percentage versus the last successful run;
-- available booths unexpectedly drop from a non-zero baseline to zero; or
-- sold booths unexpectedly drop from a non-zero baseline to zero.
+## Running
 
-A preview still shows results when a safety rule fails, but clearly warns that live sync would stop.
+Use:
 
-## SharePoint mismatch behavior
+- `preview.bat` to calculate and display changes without writing.
+- `sync.bat` to apply changes.
 
-- CSV Event ID not found in SharePoint: skip and log.
-- SharePoint Event ID not found in CSV: leave unchanged and log.
-- Duplicate Event ID in SharePoint: update neither duplicate and mark the run partial.
-- One SharePoint update fails: continue other events, log the failure, and do not advance the safety baseline.
-
-## Authentication
-
-See `AUTH-SETUP.md` for the initial laptop configuration.
-
-Laptop testing uses `InteractiveBrowser`. Server production will use `Certificate` authentication later without changing the CSV or SharePoint logic.
-
-## State and logs
-
-- `state\last-success.json` stores the last fully successful CSV baseline used by safety checks.
-- `state\logs\` contains timestamped run logs.
+For laptop testing, authentication uses the configured interactive Entra app registration. Server deployment can later switch to certificate-based unattended authentication without changing the sync logic.

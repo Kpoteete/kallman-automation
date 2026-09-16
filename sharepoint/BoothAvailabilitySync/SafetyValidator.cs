@@ -2,7 +2,7 @@ namespace BoothAvailabilitySync;
 
 public static class SafetyValidator
 {
-    public static IReadOnlyList<SafetyMessage> Validate(
+    public static IReadOnlyList<SafetyMessage> ValidateBooths(
         CsvSnapshot current,
         SnapshotSummary? previous,
         SafetySettings settings)
@@ -13,7 +13,7 @@ public static class SafetyValidator
         {
             messages.Add(new SafetyMessage(
                 true,
-                $"CSV contains only {current.Summary.RawRows:N0} rows; minimum configured value is {settings.MinimumRawRows:N0}."));
+                $"Booths CSV contains only {current.Summary.RawRows:N0} rows; minimum configured value is {settings.MinimumRawRows:N0}."));
         }
 
         var fileAge = DateTimeOffset.UtcNow - current.FileLastWriteUtc;
@@ -21,7 +21,7 @@ public static class SafetyValidator
         {
             messages.Add(new SafetyMessage(
                 true,
-                $"CSV is {fileAge.TotalHours:N1} hours old; maximum configured age is {settings.MaximumFileAgeHours} hours."));
+                $"Booths CSV is {fileAge.TotalHours:N1} hours old; maximum configured age is {settings.MaximumFileAgeHours} hours."));
         }
 
         if (previous is null)
@@ -67,6 +67,51 @@ public static class SafetyValidator
             messages.Add(new SafetyMessage(
                 false,
                 $"New booth status value(s) appeared since the previous successful run: {string.Join(", ", newStatuses)}."));
+        }
+
+        return messages;
+    }
+
+    public static IReadOnlyList<SafetyMessage> ValidateEvents(
+        EventCsvSnapshot current,
+        SafetySettings settings)
+    {
+        var messages = new List<SafetyMessage>();
+
+        if (current.Summary.UniqueEvents < settings.MinimumEventRows)
+        {
+            messages.Add(new SafetyMessage(
+                true,
+                $"Events CSV contains only {current.Summary.UniqueEvents:N0} unique Event IDs; minimum configured value is {settings.MinimumEventRows:N0}."));
+        }
+
+        var fileAge = DateTimeOffset.UtcNow - current.FileLastWriteUtc;
+        if (fileAge.TotalHours > settings.MaximumEventsFileAgeHours)
+        {
+            messages.Add(new SafetyMessage(
+                true,
+                $"Events CSV is {fileAge.TotalHours:N1} hours old; maximum configured age is {settings.MaximumEventsFileAgeHours} hours."));
+        }
+
+        if (current.Summary.EventsWithStartDate == 0)
+        {
+            messages.Add(new SafetyMessage(
+                true,
+                "Events CSV contains zero populated StartDate values. Event detail updates are blocked."));
+        }
+
+        if (current.Summary.DuplicateRows > 0)
+        {
+            messages.Add(new SafetyMessage(
+                false,
+                $"Events CSV contained {current.Summary.DuplicateRows:N0} duplicate EventID row(s); newest ChangedOn row was used."));
+        }
+
+        if (current.Summary.BlankEventIdRows > 0)
+        {
+            messages.Add(new SafetyMessage(
+                false,
+                $"Events CSV contained {current.Summary.BlankEventIdRows:N0} row(s) with blank EventID; those rows were ignored."));
         }
 
         return messages;

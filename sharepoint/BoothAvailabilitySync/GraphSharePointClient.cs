@@ -141,6 +141,11 @@ public sealed class GraphSharePointClient : IDisposable
 
         return new ResolvedColumns(
             eventIdColumn.InternalName,
+            Resolve(settings.StartDateColumn),
+            Resolve(settings.EndDateColumn),
+            Resolve(settings.CityColumn),
+            Resolve(settings.CountryColumn),
+            Resolve(settings.SubclassColumn),
             Resolve(settings.AvailableBoothsColumn),
             Resolve(settings.AvailableAreaColumn),
             Resolve(settings.SoldBoothsColumn),
@@ -167,6 +172,51 @@ public sealed class GraphSharePointClient : IDisposable
         }
 
         return NormalizeEventId(value.ToString());
+    }
+
+    public static string? ReadString(SharePointItem item, string internalName)
+    {
+        if (!item.Fields.TryGetValue(internalName, out var value) ||
+            value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            var text = value.GetString()?.Trim();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+
+        var fallback = value.ToString().Trim();
+        return string.IsNullOrWhiteSpace(fallback) ? null : fallback;
+    }
+
+    public static DateOnly? ReadDateOnly(SharePointItem item, string internalName)
+    {
+        var text = ReadString(item, internalName);
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        if (DateTimeOffset.TryParse(
+            text,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.RoundtripKind,
+            out var dto))
+        {
+            return DateOnly.FromDateTime(dto.DateTime);
+        }
+
+        if (DateTime.TryParse(
+            text,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeUniversal,
+            out var dt))
+        {
+            return DateOnly.FromDateTime(dt);
+        }
+
+        return null;
     }
 
     public static decimal? ReadDecimal(SharePointItem item, string internalName)

@@ -1,10 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title KWI Booth Availability Sync - LIVE SYNC
+title KWI Event Portal SharePoint Sync - LIVE
 
 echo ============================================================
-echo KWI Booth Availability Sync - LIVE SYNC
+echo KWI Event Portal SharePoint Sync - LIVE
 echo This WILL update SharePoint.
 echo ============================================================
 echo.

@@ -5,6 +5,7 @@ namespace BoothAvailabilitySync;
 public sealed class AppSettings
 {
     public string InputFile { get; set; } = "";
+    public string EventsInputFile { get; set; } = "";
     public string StateFolder { get; set; } = "state";
     public SharePointSettings SharePoint { get; set; } = new();
     public AuthSettings Auth { get; set; } = new();
@@ -17,6 +18,13 @@ public sealed class SharePointSettings
     public string SitePath { get; set; } = "";
     public string ListName { get; set; } = "";
     public string EventIdColumn { get; set; } = "Event ID";
+
+    public string StartDateColumn { get; set; } = "Start Date";
+    public string EndDateColumn { get; set; } = "End Date";
+    public string CityColumn { get; set; } = "City";
+    public string CountryColumn { get; set; } = "Country";
+    public string SubclassColumn { get; set; } = "Subclass";
+
     public string AvailableBoothsColumn { get; set; } = "Available Booths";
     public string AvailableAreaColumn { get; set; } = "Available Area";
     public string SoldBoothsColumn { get; set; } = "Sold Booths";
@@ -39,7 +47,9 @@ public sealed class AuthSettings
 public sealed class SafetySettings
 {
     public int MaximumFileAgeHours { get; set; } = 24;
+    public int MaximumEventsFileAgeHours { get; set; } = 24;
     public int MinimumRawRows { get; set; } = 1000;
+    public int MinimumEventRows { get; set; } = 100;
     public decimal MaximumUniqueBoothDropPercent { get; set; } = 40m;
     public bool StopIfAvailableBoothsDropToZero { get; set; } = true;
     public bool StopIfSoldBoothsDropToZero { get; set; } = true;
@@ -91,6 +101,32 @@ public sealed record CsvSnapshot(
     SnapshotSummary Summary,
     DateTimeOffset FileLastWriteUtc);
 
+public sealed record EventDetails(
+    string EventId,
+    DateOnly? StartDate,
+    DateOnly? EndDate,
+    string City,
+    string Country,
+    string Subclass);
+
+public sealed class EventCsvSummary
+{
+    public int RawRows { get; set; }
+    public int UniqueEvents { get; set; }
+    public int DuplicateRows { get; set; }
+    public int BlankEventIdRows { get; set; }
+    public int EventsWithStartDate { get; set; }
+    public int EventsWithEndDate { get; set; }
+    public int EventsWithCity { get; set; }
+    public int EventsWithCountry { get; set; }
+    public int EventsWithSubclass { get; set; }
+}
+
+public sealed record EventCsvSnapshot(
+    IReadOnlyDictionary<string, EventDetails> DetailsByEvent,
+    EventCsvSummary Summary,
+    DateTimeOffset FileLastWriteUtc);
+
 public sealed record SafetyMessage(bool Fatal, string Message);
 
 public sealed record SharePointColumn(string Id, string InternalName, string DisplayName, bool ReadOnly);
@@ -105,6 +141,11 @@ public sealed class SharePointItem
 
 public sealed record ResolvedColumns(
     string EventId,
+    string StartDate,
+    string EndDate,
+    string City,
+    string Country,
+    string Subclass,
     string AvailableBooths,
     string AvailableArea,
     string SoldBooths,
@@ -112,23 +153,42 @@ public sealed record ResolvedColumns(
     string BoothsOnHold,
     string LastUpdated);
 
-public sealed record FieldChange(string Label, string InternalName, decimal? OldValue, decimal NewValue, bool IsInteger);
+public sealed record FieldChange(
+    string Label,
+    string InternalName,
+    decimal? OldValue,
+    decimal NewValue,
+    bool IsInteger);
+
+public sealed record DetailFieldChange(
+    string Label,
+    string InternalName,
+    string? OldDisplayValue,
+    string? NewDisplayValue,
+    object? NewValue);
 
 public sealed class EventUpdatePlan
 {
     public string EventId { get; init; } = "";
     public string SharePointItemId { get; init; } = "";
     public List<FieldChange> MetricChanges { get; init; } = new();
+    public List<DetailFieldChange> DetailChanges { get; init; } = new();
     public Dictionary<string, object?> FieldsToWrite { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class SyncPlan
 {
     public List<EventUpdatePlan> Updates { get; } = new();
-    public List<string> CsvEventsMissingInSharePoint { get; } = new();
-    public List<string> SharePointEventsMissingInCsv { get; } = new();
+
+    public List<string> BoothCsvEventsMissingInSharePoint { get; } = new();
+    public List<string> EventsCsvEventsMissingInSharePoint { get; } = new();
+    public List<string> SharePointEventsMissingInBoothCsv { get; } = new();
+    public List<string> SharePointEventsMissingInEventsCsv { get; } = new();
     public List<string> DuplicateSharePointEventIds { get; } = new();
-    public int MatchedEvents { get; set; }
+
+    public int BoothMatchedEvents { get; set; }
+    public int EventsMatchedEvents { get; set; }
     public int EventsWithMetricChanges { get; set; }
-    public int EventsWithNoMetricChanges { get; set; }
+    public int EventsWithDetailChanges { get; set; }
+    public int EventsWithNoChanges { get; set; }
 }
