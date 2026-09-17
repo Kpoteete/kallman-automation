@@ -24,6 +24,7 @@
     <Project Path="momentus/ServiceOrderItemsPull/ServiceOrderItemsPull.csproj" />
   </Folder>
   <Folder Name="/projects/">
+    <Project Path="projects/AsanaWarehousePull/AsanaWarehousePull.csproj" />
     <Project Path="projects/AccountImport/Program/AccountImport.csproj" />
     <Project Path="projects/AccountsDataIntegrityReport/Program_Momentus_AccountExport_WithAffiliations.csproj" />
     <Project Path="projects/DuplicateMerging/DuplicateMerging.csproj" />

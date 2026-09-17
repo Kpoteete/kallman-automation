@@ -7,6 +7,7 @@ New to this repository or working with an AI agent? Start with [`AGENTS.md`](AGE
 ## Main automations
 
 - Accounts, Exhibitors, Service Orders, and Service Order Items pulls
+- Asana workspace warehouse pull
 - Account Import
 - Accounts Data Integrity and Stale Account reports
 - Duplicate Merging and Automatic Duplicate Merge
