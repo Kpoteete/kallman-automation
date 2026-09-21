@@ -9,6 +9,7 @@
 | Service Orders Full Rebuild | .NET 10 | No | CSV |
 | Service Order Items Full Rebuild | .NET 10 | No | CSV |
 | Asana Warehouse Pull | .NET 10 | No | Normalized CSV warehouse |
+| Warehouse Publisher | .NET 10 | No | Read-only published warehouse copy |
 
 ## Business workflow jobs
 
