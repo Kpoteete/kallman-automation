@@ -14,6 +14,7 @@ $projects = [ordered]@{
     ExhibitorsPull = 'momentus\exhibitors-pull\ExhbitorPull.csproj'
     ServiceOrderItemsPull = 'momentus\ServiceOrderItems_FullRebuild\ServiceOrderItemsPull.csproj'
     ServiceOrdersPull = 'momentus\ServiceOrders_FullRebuild\ServiceOrdersPull.csproj'
+    WarehousePublisher = 'projects\WarehousePublisher\WarehousePublisher.csproj'
     AccountImport = 'projects\AccountImport\Program\AccountImport.csproj'
     DuplicateMerging = 'projects\DuplicateMerging\DuplicateMerging.csproj'
     MarketSegmentApplication = 'projects\MarketSegmentApplication\MarketSegmentApplication.csproj'
