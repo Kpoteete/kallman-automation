@@ -133,8 +133,11 @@ Options:
 Supported data files:
   .csv, .xlsx, .xls
 
-Operational folders skipped by default:
-  runs, history, raw, logs
+Publication scope:
+  - Supported files in the warehouse root
+  - Supported files under Asana\current
+  - Other warehouse subfolders are not scanned
+  - *.previous.csv files are skipped
 
 Safety:
   - Source and destination may not be the same folder or nested inside each other.
