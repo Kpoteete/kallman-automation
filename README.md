@@ -8,6 +8,7 @@ New to this repository or working with an AI agent? Start with [`AGENTS.md`](AGE
 
 - Accounts, Exhibitors, Service Orders, and Service Order Items pulls
 - Asana workspace warehouse pull
+- Warehouse Publisher for the read-only consumer data layer
 - Account Import
 - Accounts Data Integrity and Stale Account reports
 - Duplicate Merging and Automatic Duplicate Merge
