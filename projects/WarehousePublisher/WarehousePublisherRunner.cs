@@ -14,14 +14,6 @@ public sealed class WarehousePublisherRunner
         ".xls"
     };
 
-    private static readonly HashSet<string> ExcludedDirectoryNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "runs",
-        "history",
-        "raw",
-        "logs"
-    };
-
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true
@@ -59,9 +51,7 @@ public sealed class WarehousePublisherRunner
         var result = new PublisherRunResult();
         var seenRelativePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        List<string> sourceFiles = Directory
-            .EnumerateFiles(options.SourceRoot, "*", SearchOption.AllDirectories)
-            .Where(IsPublishableSourceFile)
+        List<string> sourceFiles = EnumeratePublishableSourceFiles()
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -225,10 +215,34 @@ public sealed class WarehousePublisherRunner
         }
     }
 
-    private bool IsPublishableSourceFile(string fullPath)
+    private IEnumerable<string> EnumeratePublishableSourceFiles()
     {
-        string relativePath = Path.GetRelativePath(options.SourceRoot, fullPath);
-        string fileName = Path.GetFileName(relativePath);
+        foreach (string path in Directory.EnumerateFiles(
+                     options.SourceRoot,
+                     "*",
+                     SearchOption.TopDirectoryOnly))
+        {
+            if (IsSupportedDataFile(path, excludePreviousCsv: true))
+                yield return path;
+        }
+
+        string asanaCurrent = Path.Combine(options.SourceRoot, "Asana", "current");
+        if (!Directory.Exists(asanaCurrent))
+            yield break;
+
+        foreach (string path in Directory.EnumerateFiles(
+                     asanaCurrent,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            if (IsSupportedDataFile(path, excludePreviousCsv: true))
+                yield return path;
+        }
+    }
+
+    private static bool IsSupportedDataFile(string fullPath, bool excludePreviousCsv)
+    {
+        string fileName = Path.GetFileName(fullPath);
 
         if (fileName.StartsWith("~$", StringComparison.OrdinalIgnoreCase) ||
             fileName.StartsWith(".", StringComparison.OrdinalIgnoreCase))
@@ -237,15 +251,11 @@ public sealed class WarehousePublisherRunner
         if (!SupportedExtensions.Contains(Path.GetExtension(fileName)))
             return false;
 
-        string? directory = Path.GetDirectoryName(relativePath);
-        if (string.IsNullOrWhiteSpace(directory))
-            return true;
+        if (excludePreviousCsv &&
+            fileName.EndsWith(".previous.csv", StringComparison.OrdinalIgnoreCase))
+            return false;
 
-        string[] segments = directory.Split(
-            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-            StringSplitOptions.RemoveEmptyEntries);
-
-        return !segments.Any(segment => ExcludedDirectoryNames.Contains(segment));
+        return true;
     }
 
     private StableHash? TryHashStableFile(string path)

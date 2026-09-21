@@ -16,9 +16,14 @@ The publisher copies only supported data files that are new or changed. Existing
 - .xlsx
 - .xls
 
-Folder structure is preserved.
+Publication scope is deliberately narrow:
 
-Operational folders named runs, history, raw, and logs are excluded recursively. This means the Asana warehouse publishes Asana\current\*.csv but does not expose its immutable run history or raw API responses.
+- Supported CSV/Excel files in the warehouse root are eligible.
+- Asana\current is eligible recursively.
+- Other warehouse subfolders are not scanned or published.
+- Files ending in .previous.csv are skipped.
+
+This keeps report history such as Data Integrity Reports private while still publishing the current warehouse datasets used by downstream tools.
 
 Excel temporary files beginning with ~$ and hidden-style files beginning with . are also skipped.
 
@@ -66,6 +71,8 @@ Production should use a published Release artifact rather than dotnet run.
 - If the source changes during hashing or copying, that file is deferred until the next run.
 - Concurrent publisher runs are blocked by an exclusive lock.
 - Missing source files are not deleted from the published warehouse.
+- Historical/report subfolders are not scanned; only root-level datasets and Asana\current are eligible.
+- Files ending in .previous.csv are ignored.
 - Empty source files are refused and the existing published copy is retained.
 - _warehouse_status.json is written to the published root after each non-preview run.
 
