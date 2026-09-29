@@ -5,7 +5,7 @@ internal static class WorkspaceWarehouse
 {
     public static async Task<int> RunAsync(AsanaReadOnlyClient client, Options options, string runId, string runRoot)
     {
-        var users = await client.GetAllAsync($"workspaces/{options.WorkspaceGid}/users", Fields.User, "workspace-users");
+        var users = await client.GetAllAsync($"users?workspace={Uri.EscapeDataString(options.WorkspaceGid)}", Fields.User, "workspace-users");
         var workspaceMemberships = await client.GetAllAsync($"workspaces/{options.WorkspaceGid}/workspace_memberships", Fields.WorkspaceMembership, "workspace-memberships");
         var teams = await client.GetAllAsync($"workspaces/{options.WorkspaceGid}/teams", Fields.Team, "workspace-teams");
         var teamMemberships = new List<JsonElement>();
