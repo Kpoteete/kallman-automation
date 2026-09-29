@@ -1,11 +1,11 @@
 # Service Order Booth Updater
 
 Adds a booth number to eligible Momentus service orders from the latest accepted
-Booth Proposal activity on the related exhibitor.
+Booth Proposal or DC activity on the related exhibitor.
 
 ## Confirmed business mapping
 
-- Activity `Type` is `BP` (Booth Proposal).
+- Activity `Type` is `BP` (Booth Proposal) or `DC`.
 - Activity and service order must have the same `ExhibitorID`/`Exhibitor` and `Event`.
 - Activity text must contain `accepted booth <value>, and had these comments`.
 - Eligible order statuses are `A` (active) and `PC` (pending completion).

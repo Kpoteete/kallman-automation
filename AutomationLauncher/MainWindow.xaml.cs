@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -25,22 +25,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isRunning;
     private bool _allowClose;
     private string _elapsedText = "00:00:00";
-    private string _headerStatusText = "Preparing the run...";
-    private string _completedSummary = $"0 of {AutomationCatalog.Steps.Count} complete";
-    private string _currentStepLabel = "Ready to begin";
+    private string _headerStatusText = "Choose automations to run";
+    private string _completedSummary = "10 selected";
+    private string _currentStepLabel = "Choose jobs";
     private double _progressValue;
-    private string _footerStatusText = "Getting everything ready";
-    private string _footerDetailText = "The first job will begin automatically.";
+    private string _footerStatusText = "Ready";
+    private string _footerDetailText = "Select the automations you want, then click Run selected.";
     private Brush _footerStatusBrush = BrushFrom("#74A9A5");
     private bool _canClose;
+    private bool _canRun = true;
     private Visibility _progressVisibility = Visibility.Visible;
     private Visibility _summaryVisibility = Visibility.Collapsed;
     private Visibility _summaryToggleVisibility = Visibility.Collapsed;
     private string _viewToggleText = "View summary";
-    private string _summaryCompletedValue = "0 / 11";
-    private string _summaryNewValue = "—";
-    private string _summaryUpdatedValue = "—";
-    private string _summaryAlertsValue = "—";
+    private string _summaryCompletedValue = "0 / 10";
+    private string _summaryNewValue = "-";
+    private string _summaryUpdatedValue = "-";
+    private string _summaryAlertsValue = "-";
     private Brush _summaryAlertsBrush = BrushFrom("#18383C");
     private string _summaryBadgeText = "RUNNING";
     private Brush _summaryBadgeBackground = BrushFrom("#E4EFED");
@@ -73,6 +74,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string FooterDetailText { get => _footerDetailText; set => SetField(ref _footerDetailText, value); }
     public Brush FooterStatusBrush { get => _footerStatusBrush; set => SetField(ref _footerStatusBrush, value); }
     public bool CanClose { get => _canClose; set => SetField(ref _canClose, value); }
+    public bool CanRun { get => _canRun; set => SetField(ref _canRun, value); }
     public Visibility ProgressVisibility { get => _progressVisibility; set => SetField(ref _progressVisibility, value); }
     public Visibility SummaryVisibility { get => _summaryVisibility; set => SetField(ref _summaryVisibility, value); }
     public Visibility SummaryToggleVisibility { get => _summaryToggleVisibility; set => SetField(ref _summaryToggleVisibility, value); }
@@ -88,7 +90,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    private async void Window_ContentRendered(object? sender, EventArgs e)
+    private void Window_ContentRendered(object? sender, EventArgs e)
     {
         if (_previewMode)
         {
@@ -98,47 +100,135 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        await Task.Delay(450);
+        HeaderStatusText = "Choose automations to run";
+        FooterStatusText = "Ready";
+        FooterDetailText = "Select the automations you want, then click Run selected.";
+        FooterStatusBrush = BrushFrom("#4E9A94");
+        CanClose = true;
+        CanRun = true;
+        UpdateSelectionStatus();
+    }
+
+    private async void RunSelected_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRunning)
+            return;
+
+        if (!Steps.Any(step => step.IsSelected))
+        {
+            FooterStatusText = "Nothing selected";
+            FooterDetailText = "Select at least one automation before starting.";
+            FooterStatusBrush = BrushFrom("#C08A45");
+            return;
+        }
+
         await RunSequenceAsync();
     }
 
+    private void SelectAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRunning)
+            return;
+
+        foreach (var step in Steps)
+            step.IsSelected = true;
+
+        UpdateSelectionStatus();
+    }
+
+    private void ClearAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRunning)
+            return;
+
+        foreach (var step in Steps)
+            step.IsSelected = false;
+
+        UpdateSelectionStatus();
+    }
+
+    private void StepSelection_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_isRunning)
+            UpdateSelectionStatus();
+    }
+
+    private void UpdateSelectionStatus()
+    {
+        var selected = Steps.Count(step => step.IsSelected);
+        CompletedSummary = $"{selected} selected";
+        CurrentStepLabel = $"{selected} of {Steps.Count} selected";
+    }
     private async Task RunSequenceAsync()
     {
+        var selectedIndexes = Steps
+            .Select((step, index) => new { step, index })
+            .Where(x => x.step.IsSelected)
+            .Select(x => x.index)
+            .ToList();
+
+        if (selectedIndexes.Count == 0)
+            return;
+
+        foreach (var step in Steps)
+            step.SetSelectionEnabled(false);
+
         _isRunning = true;
+        CanRun = false;
         CanClose = false;
+        ProgressVisibility = Visibility.Visible;
+        SummaryVisibility = Visibility.Collapsed;
+        SummaryToggleVisibility = Visibility.Collapsed;
+        ProgressValue = 0;
+        CompletedSummary = $"0 of {selectedIndexes.Count} selected complete";
         _runStopwatch.Restart();
         _displayTimer.Start();
 
         try
         {
             Directory.CreateDirectory(AutomationCatalog.LogDirectory);
-            var logPath = Path.Combine(AutomationCatalog.LogDirectory, $"Run-All-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.log");
-            _logWriter = new StreamWriter(logPath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)) { AutoFlush = true };
+            var logPath = Path.Combine(
+                AutomationCatalog.LogDirectory,
+                $"Run-All-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.log");
+
+            _logWriter = new StreamWriter(
+                logPath,
+                append: false,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: true))
+            {
+                AutoFlush = true
+            };
 
             WriteLog("KWI AUTOMATION SEQUENCE - LIVE RUN");
             WriteLog($"Started: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            WriteLog($"Selected jobs: {selectedIndexes.Count}");
 
-            if (!AutomationCatalog.TryValidate(out var validationMessage))
+            var selectedDefinitions = selectedIndexes
+                .Select(index => AutomationCatalog.Steps[index])
+                .ToList();
+
+            if (!AutomationCatalog.TryValidate(selectedDefinitions, out var validationMessage))
                 throw new InvalidOperationException(validationMessage);
 
             WriteLog($"Preflight: {validationMessage}");
             FooterStatusText = "Live refresh in progress";
-            FooterDetailText = "You can leave this window open while the jobs run.";
+            FooterDetailText = "The selected jobs will run one at a time.";
             FooterStatusBrush = BrushFrom("#4E9A94");
 
-            for (var index = 0; index < AutomationCatalog.Steps.Count; index++)
+            for (var selectedPosition = 0; selectedPosition < selectedIndexes.Count; selectedPosition++)
             {
+                var index = selectedIndexes[selectedPosition];
                 var definition = AutomationCatalog.Steps[index];
                 var viewModel = Steps[index];
                 var stepTimer = Stopwatch.StartNew();
 
                 viewModel.MarkRunning();
-                CurrentStepLabel = $"Step {index + 1} of {AutomationCatalog.Steps.Count}";
+                CurrentStepLabel = $"Step {selectedPosition + 1} of {selectedIndexes.Count}";
                 HeaderStatusText = $"Running {definition.Name}";
                 FooterStatusText = definition.Name;
                 FooterDetailText = definition.Description;
                 WriteLog("");
-                WriteLog($"STEP {index + 1} STARTED: {definition.Name}");
+                WriteLog($"STEP {selectedPosition + 1} STARTED: {definition.Name}");
 
                 var exitCode = await RunProcessAsync(definition, index);
                 stepTimer.Stop();
@@ -146,26 +236,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 if (exitCode != 0)
                 {
                     viewModel.MarkFailed(FormatDuration(stepTimer.Elapsed));
-                    throw new InvalidOperationException($"{definition.Name} stopped with exit code {exitCode}.");
+                    throw new InvalidOperationException(
+                        $"{definition.Name} stopped with exit code {exitCode}.");
                 }
 
                 viewModel.MarkCompleted(FormatDuration(stepTimer.Elapsed));
-                var completed = index + 1;
-                ProgressValue = completed * 100d / AutomationCatalog.Steps.Count;
-                CompletedSummary = $"{completed} of {AutomationCatalog.Steps.Count} complete";
-                WriteLog($"STEP {completed} COMPLETED: {definition.Name} ({FormatDuration(stepTimer.Elapsed)})");
+
+                var completed = selectedPosition + 1;
+                ProgressValue = completed * 100d / selectedIndexes.Count;
+                CompletedSummary = $"{completed} of {selectedIndexes.Count} selected complete";
+                WriteLog(
+                    $"STEP {completed} COMPLETED: {definition.Name} ({FormatDuration(stepTimer.Elapsed)})");
             }
 
             _runStopwatch.Stop();
             _displayTimer.Stop();
             ElapsedText = FormatDuration(_runStopwatch.Elapsed);
-            HeaderStatusText = "Everything is up to date";
+            HeaderStatusText = "Everything selected is up to date";
             CurrentStepLabel = "Run complete";
-            FooterStatusText = "All automations completed successfully";
-            FooterDetailText = $"Finished in {FormatDuration(_runStopwatch.Elapsed)}. It is safe to close this window.";
+            FooterStatusText = "Selected automations completed successfully";
+            FooterDetailText =
+                $"Finished in {FormatDuration(_runStopwatch.Elapsed)}. It is safe to close this window.";
             FooterStatusBrush = BrushFrom("#3E9A73");
             WriteLog("");
-            WriteLog($"ALL AUTOMATIONS COMPLETED: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            WriteLog($"ALL SELECTED AUTOMATIONS COMPLETED: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
             BuildAndShowSummary(null);
         }
         catch (Exception exception)
@@ -186,16 +280,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         finally
         {
             _activeProcess = null;
+
             lock (_logSync)
             {
                 _logWriter?.Dispose();
                 _logWriter = null;
             }
+
             _isRunning = false;
             CanClose = true;
         }
     }
-
     private async Task<int> RunProcessAsync(AutomationStepDefinition step, int stepIndex)
     {
         var startInfo = new ProcessStartInfo
@@ -248,82 +343,105 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         for (var index = 0; index < AutomationCatalog.Steps.Count; index++)
         {
+            if (!Steps[index].IsSelected)
+            {
+                SummaryItems.Add(
+                    StepSummaryViewModel.NotSelected(
+                        AutomationCatalog.Steps[index].Name));
+                continue;
+            }
+
             List<string> output;
             lock (_outputSync)
                 output = _stepOutputs[index].ToList();
 
             var visualState = Steps[index].State;
-            var parsed = StepSummaryParser.Parse(AutomationCatalog.Steps[index].Name, output);
+            var parsed = StepSummaryParser.Parse(
+                AutomationCatalog.Steps[index].Name,
+                output);
 
             if (visualState == AutomationVisualState.Waiting)
             {
-                SummaryItems.Add(StepSummaryViewModel.Skipped(
-                    AutomationCatalog.Steps[index].Name,
-                    "Not run because the sequence stopped earlier."));
+                SummaryItems.Add(
+                    StepSummaryViewModel.Skipped(
+                        AutomationCatalog.Steps[index].Name,
+                        "Not run because the sequence stopped earlier."));
                 reviewItems++;
                 continue;
             }
 
             if (visualState == AutomationVisualState.Failed)
             {
-                SummaryItems.Add(StepSummaryViewModel.Failed(
-                    AutomationCatalog.Steps[index].Name,
-                    failureMessage ?? "The program returned an unsuccessful exit code."));
+                SummaryItems.Add(
+                    StepSummaryViewModel.Failed(
+                        AutomationCatalog.Steps[index].Name,
+                        failureMessage ?? "The program returned an unsuccessful exit code."));
                 reviewItems++;
                 continue;
             }
 
-            SummaryItems.Add(StepSummaryViewModel.Completed(
-                AutomationCatalog.Steps[index].Name,
-                parsed.Headline,
-                parsed.Detail,
-                parsed.ReviewItems > 0));
+            SummaryItems.Add(
+                StepSummaryViewModel.Completed(
+                    AutomationCatalog.Steps[index].Name,
+                    parsed.Headline,
+                    parsed.Detail,
+                    parsed.ReviewItems > 0));
+
             insertedTotal += parsed.InsertedRows ?? 0;
             updatedTotal += parsed.UpdatedRows ?? 0;
             reviewItems += parsed.ReviewItems;
         }
 
-        var completedCount = Steps.Count(step => step.State == AutomationVisualState.Completed);
-        var failedCount = Steps.Count(step => step.State == AutomationVisualState.Failed);
-        var skippedCount = Steps.Count(step => step.State == AutomationVisualState.Waiting);
-        SummaryCompletedValue = $"{completedCount} / {Steps.Count}";
+        var selectedCount = Steps.Count(step => step.IsSelected);
+        var completedCount = Steps.Count(
+            step => step.IsSelected && step.State == AutomationVisualState.Completed);
+        var failedCount = Steps.Count(
+            step => step.IsSelected && step.State == AutomationVisualState.Failed);
+        var skippedCount = Steps.Count(
+            step => step.IsSelected && step.State == AutomationVisualState.Waiting);
+
+        SummaryCompletedValue = $"{completedCount} / {selectedCount}";
         SummaryNewValue = insertedTotal.ToString("N0");
         SummaryUpdatedValue = updatedTotal.ToString("N0");
         SummaryAlertsValue = reviewItems.ToString("N0");
-        SummaryAlertsBrush = reviewItems == 0 ? BrushFrom("#3E8866") : BrushFrom("#A65D43");
+        SummaryAlertsBrush =
+            reviewItems == 0 ? BrushFrom("#3E8866") : BrushFrom("#A65D43");
 
         if (failedCount > 0 || skippedCount > 0)
         {
-            SummaryBadgeText = "INCOMPLETE — REVIEW NEEDED";
+            SummaryBadgeText = "INCOMPLETE - REVIEW NEEDED";
             SummaryBadgeBackground = BrushFrom("#F9E5E1");
             SummaryBadgeForeground = BrushFrom("#A6504C");
         }
         else if (reviewItems > 0)
         {
-            SummaryBadgeText = "COMPLETE — REVIEW NOTED ITEMS";
+            SummaryBadgeText = "COMPLETE - REVIEW NOTED ITEMS";
             SummaryBadgeBackground = BrushFrom("#F8EEDC");
             SummaryBadgeForeground = BrushFrom("#95632F");
         }
         else
         {
-            SummaryBadgeText = "COMPLETE — ALL CLEAR";
+            SummaryBadgeText = "COMPLETE - ALL CLEAR";
             SummaryBadgeBackground = BrushFrom("#DFF1E8");
             SummaryBadgeForeground = BrushFrom("#347A5A");
         }
 
         WriteLog("");
         WriteLog("RUN SUMMARY");
-        WriteLog($"Jobs complete: {completedCount}/{Steps.Count}; failed: {failedCount}; not run: {skippedCount}");
-        WriteLog($"New warehouse rows: {insertedTotal:N0}; updated rows: {updatedTotal:N0}; items to review: {reviewItems:N0}");
+        WriteLog(
+            $"Jobs complete: {completedCount}/{selectedCount}; failed: {failedCount}; not run after start: {skippedCount}");
+        WriteLog(
+            $"New warehouse rows: {insertedTotal:N0}; updated rows: {updatedTotal:N0}; items to review: {reviewItems:N0}");
+
         foreach (var item in SummaryItems)
-            WriteLog($"{item.Name}: {item.StatusText} - {item.Headline} {item.Detail}".Trim());
+            WriteLog(
+                $"{item.Name}: {item.StatusText} - {item.Headline} {item.Detail}".Trim());
 
         ProgressVisibility = Visibility.Collapsed;
         SummaryVisibility = Visibility.Visible;
         SummaryToggleVisibility = Visibility.Visible;
         ViewToggleText = "View run details";
     }
-
     private void ShowPreviewState()
     {
         Steps[0].MarkCompleted("00:42");
@@ -364,7 +482,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         CompletedSummary = $"{Steps.Count} of {Steps.Count} complete";
         ProgressValue = 100;
         FooterStatusText = "All automations completed successfully";
-        FooterDetailText = "Summary preview — no automation was run.";
+        FooterDetailText = "Summary preview â€” no automation was run.";
         FooterStatusBrush = BrushFrom("#3E9A73");
     }
 
@@ -440,7 +558,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 public sealed class AutomationStepViewModel : INotifyPropertyChanged
 {
-    private AutomationVisualState _state = AutomationVisualState.Waiting;
+    
+    private bool _isSelected;
+    private bool _isSelectionEnabled = true;
+private AutomationVisualState _state = AutomationVisualState.Waiting;
     private string _statusText = "WAITING";
     private string _durationText = "";
     private string _indicatorText;
@@ -452,6 +573,8 @@ public sealed class AutomationStepViewModel : INotifyPropertyChanged
 
     public AutomationStepViewModel(int number, AutomationStepDefinition definition)
     {
+        _isSelected = definition.Name != "Registration List Automation" &&
+                      definition.Name != "Accounts Data Integrity Report";
         Number = number;
         Name = definition.Name;
         Description = definition.Description;
@@ -473,12 +596,28 @@ public sealed class AutomationStepViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => SetField(ref _isSelected, value);
+    }
+
+    public bool IsSelectionEnabled
+    {
+        get => _isSelectionEnabled;
+        private set => SetField(ref _isSelectionEnabled, value);
+    }
+
+    public void SetSelectionEnabled(bool enabled)
+    {
+        IsSelectionEnabled = enabled;
+    }
     public void MarkRunning()
     {
         State = AutomationVisualState.Running;
         StatusText = "RUNNING";
         DurationText = "In progress";
-        IndicatorText = "→";
+        IndicatorText = "\u2192";
         CardBackground = MainWindowBrushes.RunningCard;
         BorderBrush = MainWindowBrushes.RunningBorder;
         IndicatorBackground = MainWindowBrushes.RunningIndicator;
@@ -491,7 +630,7 @@ public sealed class AutomationStepViewModel : INotifyPropertyChanged
         State = AutomationVisualState.Completed;
         StatusText = "DONE";
         DurationText = duration;
-        IndicatorText = "✓";
+        IndicatorText = "\u2713";
         CardBackground = MainWindowBrushes.CompletedCard;
         BorderBrush = MainWindowBrushes.CompletedBorder;
         IndicatorBackground = MainWindowBrushes.CompletedIndicator;
@@ -562,14 +701,17 @@ public sealed class StepSummaryViewModel
 
     public static StepSummaryViewModel Completed(string name, string headline, string detail, bool needsReview) =>
         needsReview
-            ? new(name, "DONE — REVIEW NOTED", "✓", headline, detail, MainWindowBrushes.WarningIndicator, MainWindowBrushes.WarningBorder, MainWindowBrushes.WarningStatus)
-            : new(name, "COMPLETED", "✓", headline, detail, MainWindowBrushes.CompletedIndicator, MainWindowBrushes.CompletedBorder, MainWindowBrushes.CompletedStatus);
+            ? new(name, "DONE - REVIEW NOTED", "\u2713", headline, detail, MainWindowBrushes.WarningIndicator, MainWindowBrushes.WarningBorder, MainWindowBrushes.WarningStatus)
+            : new(name, "COMPLETED", "\u2713", headline, detail, MainWindowBrushes.CompletedIndicator, MainWindowBrushes.CompletedBorder, MainWindowBrushes.CompletedStatus);
 
     public static StepSummaryViewModel Failed(string name, string detail) =>
         new(name, "FAILED", "!", "This job did not complete.", detail, MainWindowBrushes.FailedIndicator, MainWindowBrushes.FailedBorder, MainWindowBrushes.FailedStatus);
 
     public static StepSummaryViewModel Skipped(string name, string detail) =>
-        new(name, "NOT RUN", "—", "Skipped after an earlier failure.", detail, MainWindowBrushes.WaitingNumber, MainWindowBrushes.WaitingBorder, MainWindowBrushes.WaitingStatus);
+        new(name, "NOT RUN", "-", "Skipped after an earlier failure.", detail, MainWindowBrushes.WaitingNumber, MainWindowBrushes.WaitingBorder, MainWindowBrushes.WaitingStatus);
+
+    public static StepSummaryViewModel NotSelected(string name) =>
+        new(name, "NOT SELECTED", "-", "Not selected for this run.", "You can include it the next time you open the launcher.", MainWindowBrushes.WaitingNumber, MainWindowBrushes.WaitingBorder, MainWindowBrushes.WaitingStatus);
 }
 
 public sealed record ParsedStepSummary(
@@ -604,6 +746,36 @@ public static class StepSummaryParser
             return PullSummary("activities", inserted, updated, finalRows);
         if (stepName == "Events Pull")
             return PullSummary("events", inserted, updated, finalRows);
+        if (stepName == "Booths Pull")
+            return PullSummary("booths", inserted, updated, finalRows);
+        if (stepName == "Booth Availability SharePoint Sync")
+        {
+            var matched = FindLast(lines, @"Events matched between CSV and SharePoint:\s*([\d,]+)");
+            var metricChanges = FindLast(lines, @"Events with metric changes:\s*([\d,]+)");
+            var itemsUpdated = FindLast(lines, @"SharePoint items updated successfully:\s*([\d,]+)");
+            var duplicateIds = FindLast(lines, @"Duplicate Event IDs in SharePoint:\s*([\d,]+)") ?? 0;
+
+            var headline = itemsUpdated.HasValue
+                ? $"{itemsUpdated:N0} SharePoint event rows refreshed"
+                : "Booth availability synchronized to SharePoint";
+
+            var detailParts = new List<string>();
+            if (matched.HasValue)
+                detailParts.Add($"{matched:N0} events matched");
+            if (metricChanges.HasValue)
+                detailParts.Add($"{metricChanges:N0} events had booth metric changes");
+
+            var detail = detailParts.Count > 0
+                ? string.Join("; ", detailParts) + "."
+                : "The SharePoint booth availability sync completed successfully.";
+
+            return new ParsedStepSummary(
+                headline,
+                detail,
+                null,
+                null,
+                duplicateIds);
+        }
         if (stepName == "Notes Pull")
             return PullSummary("notes", inserted, updated, finalRows);
 
@@ -689,7 +861,7 @@ public static class StepSummaryParser
             headlineParts.Add($"{finalRows:N0} total");
 
         var headline = headlineParts.Count > 0
-            ? string.Join(" • ", headlineParts) + $" {noun}"
+            ? string.Join(" â€¢ ", headlineParts) + $" {noun}"
             : $"{noun} refresh completed";
         var detail = inserted.HasValue || updated.HasValue
             ? "Counts are taken directly from the program's validated publication output."
@@ -776,6 +948,13 @@ public static class AutomationCatalog
 
     public static bool TryValidate(out string message)
     {
+        return TryValidate(Steps, out message);
+    }
+
+    public static bool TryValidate(
+        IEnumerable<AutomationStepDefinition> stepsToValidate,
+        out string message)
+    {
         var missing = new List<string>();
 
         if (!Directory.Exists(AutomationRoot))
@@ -789,24 +968,25 @@ public static class AutomationCatalog
                 missing.Add($"environment variable {variable}");
         }
 
-        foreach (var step in Steps)
+        foreach (var step in stepsToValidate)
         {
             if (!Directory.Exists(step.WorkingDirectory))
                 missing.Add(step.WorkingDirectory);
+
             foreach (var path in step.RequiredPaths.Where(path => !File.Exists(path)))
                 missing.Add(path);
         }
 
         if (missing.Count > 0)
         {
-            message = "Required item missing: " + string.Join("; ", missing.Distinct(StringComparer.OrdinalIgnoreCase));
+            message = "Required item missing: " +
+                      string.Join("; ", missing.Distinct(StringComparer.OrdinalIgnoreCase));
             return false;
         }
 
-        message = "All programs, folders, and credential variables are available.";
+        message = "All selected programs, folders, and credential variables are available.";
         return true;
     }
-
     private static IReadOnlyList<AutomationStepDefinition> BuildSteps()
     {
         var steps = new List<AutomationStepDefinition>();
@@ -816,19 +996,39 @@ public static class AutomationCatalog
             "Refreshing exhibitor records.",
             @"momentus\exhibitors-pull",
             "ExhbitorPull.csproj"));
+
         steps.Add(DotNetStep(
             "Service Orders Pull",
             "Refreshing service-order headers.",
             @"momentus\ServiceOrderPull",
             "ServiceOrderPull.csproj"));
+
         steps.Add(DotNetStep(
             "Service Order Items Pull",
             "Refreshing service-order line item data.",
             @"momentus\ServiceOrderItemsPull",
             "ServiceOrderItemsPull.csproj"));
 
-        var activitiesFolder = Path.Combine(AutomationRoot, @"momentus\ActivitiesPull");
-        var activitiesExecutable = Path.Combine(activitiesFolder, @"publish\ActivitiesPull.exe");
+        steps.Add(DotNetStep(
+            "Booths Pull",
+            "Refreshing booth inventory and availability data.",
+            @"momentus\BoothsPull",
+            "BoothsPull.csproj"));
+
+        steps.Add(DotNetStep(
+            "Booth Availability SharePoint Sync",
+            "Publishing booth availability metrics to SharePoint.",
+            @"sharepoint\BoothAvailabilitySync",
+            "BoothAvailabilitySync.csproj",
+            "sync"));
+
+        var activitiesFolder = Path.Combine(
+            AutomationRoot,
+            @"momentus\ActivitiesPull");
+        var activitiesExecutable = Path.Combine(
+            activitiesFolder,
+            @"publish\ActivitiesPull.exe");
+
         steps.Add(new AutomationStepDefinition(
             "Activities Pull",
             "Applying the incremental activities refresh.",
@@ -837,11 +1037,6 @@ public static class AutomationCatalog
             new[] { "incremental" },
             new[] { activitiesExecutable }));
 
-        steps.Add(DotNetStep(
-            "Events Pull",
-            "Refreshing event records.",
-            @"momentus\EventsPull",
-            "EventsPull.csproj"));
         steps.Add(DotNetStep(
             "Notes Pull",
             "Refreshing account and contact notes.",
@@ -854,31 +1049,34 @@ public static class AutomationCatalog
             @"momentus\Account_name_punctuation_and_email_cleanup",
             "Account_name_punctuation_and_email_cleanup.csproj",
             "--apply"));
+
         steps.Add(DotNetStep(
             "Website Correction Daily",
             "Applying approved website corrections.",
             @"momentus\WebsiteCorrectionDaily",
             "WebsiteCorrectionDaily.csproj",
             "--apply"));
+
         steps.Add(DotNetStep(
             "Accounts Pull",
             "Refreshing the account warehouse file.",
             @"momentus\Accounts_Pull",
             "Accounts_Pull.csproj"));
+
         steps.Add(DotNetStep(
             "Registration List Automation",
-            "Rebuilding the registration-list workbook.",
+            "Optional: rebuild the registration-list workbooks.",
             @"projects\RegistrationListAutomation",
             "RegistrationListAutomation.csproj"));
+
         steps.Add(DotNetStep(
             "Accounts Data Integrity Report",
-            "Producing the final account integrity report.",
+            "Optional: produce the account data-integrity report.",
             @"projects\AccountsDataIntegrityReport",
             "Program_Momentus_AccountExport_WithAffiliations.csproj"));
 
         return steps;
     }
-
     private static AutomationStepDefinition DotNetStep(
         string name,
         string description,
@@ -904,3 +1102,4 @@ public static class AutomationCatalog
             new[] { projectPath });
     }
 }
+

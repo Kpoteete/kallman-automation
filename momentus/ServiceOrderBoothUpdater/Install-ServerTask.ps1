@@ -26,7 +26,7 @@ $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccou
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 45)
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings `
-    -Description 'Hourly Momentus BP activity to service-order BoothNumber reconciliation.' -Force | Out-Null
+    -Description 'Hourly Momentus BP/DC activity to service-order BoothNumber reconciliation.' -Force | Out-Null
 
 $mode = if ($EnableLiveUpdates) { 'LIVE' } else { 'PREVIEW' }
 Write-Host "Installed '$TaskName' to run hourly in $mode mode."

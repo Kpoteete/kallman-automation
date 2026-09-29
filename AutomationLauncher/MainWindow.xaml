@@ -1,4 +1,4 @@
-<Window x:Class="KwiAutomationLauncher.MainWindow"
+﻿<Window x:Class="KwiAutomationLauncher.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="KWI Automation Center"
@@ -51,7 +51,7 @@
                         </Border>
                     </StackPanel>
                     <TextBlock Text="Automation Center" Foreground="White" FontSize="30" FontWeight="SemiBold" Margin="0,13,0,2" />
-                    <TextBlock Text="A calm, guided refresh of your daily Momentus data." Foreground="#CFE5E2" FontSize="14" />
+                    <TextBlock Text="Choose exactly which KWI automations you want to run." Foreground="#CFE5E2" FontSize="14" />
                 </StackPanel>
 
                 <Border Grid.Row="0" Grid.Column="1" Background="#1EFFFFFF" CornerRadius="12" Padding="20,12" MinWidth="158">
@@ -92,7 +92,7 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="Run sequence" Foreground="{StaticResource InkBrush}" FontSize="18" FontWeight="SemiBold" />
-                    <TextBlock Text="Each job finishes before the next one begins." Foreground="{StaticResource MutedInkBrush}" FontSize="12" Margin="0,3,0,0" />
+                    <TextBlock Text="Check the jobs you want. Optional reports start unchecked." Foreground="{StaticResource MutedInkBrush}" FontSize="12" Margin="0,3,0,0" />
                 </StackPanel>
                 <TextBlock Grid.Column="1" Text="{Binding CurrentStepLabel}" Foreground="#4D7778" FontSize="12" VerticalAlignment="Bottom" Margin="0,0,0,2" />
             </Grid>
@@ -118,22 +118,30 @@
                                 </Border.Effect>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="30" />
                                         <ColumnDefinition Width="42" />
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <Border Width="34" Height="34" CornerRadius="17" Background="{Binding IndicatorBackground}"
+                                    <CheckBox Grid.Column="0"
+                                              IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                              IsEnabled="{Binding IsSelectionEnabled}"
+                                              Click="StepSelection_Click"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              ToolTip="Include this automation in the run" />
+                                    <Border Grid.Column="1" Width="34" Height="34" CornerRadius="17" Background="{Binding IndicatorBackground}"
                                             HorizontalAlignment="Left" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding IndicatorText}" Foreground="{Binding IndicatorForeground}"
                                                    FontSize="15" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     </Border>
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="2,0,8,0">
+                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="2,0,8,0">
                                         <TextBlock Text="{Binding Name}" Foreground="{StaticResource InkBrush}" FontSize="13" FontWeight="SemiBold"
                                                    TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{Binding Description}" Foreground="{StaticResource MutedInkBrush}" FontSize="10.5" Margin="0,3,0,0"
                                                    TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
-                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                    <StackPanel Grid.Column="3" VerticalAlignment="Center" HorizontalAlignment="Right">
                                         <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusForeground}" FontSize="10.5" FontWeight="SemiBold"
                                                    HorizontalAlignment="Right" />
                                         <TextBlock Text="{Binding DurationText}" Foreground="#829294" FontSize="10" Margin="0,3,0,0"
@@ -239,6 +247,10 @@
                     </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Content="Select all" Click="SelectAll_Click" IsEnabled="{Binding CanRun}" Margin="0,0,7,0" />
+                    <Button Content="Clear all" Click="ClearAll_Click" IsEnabled="{Binding CanRun}" Margin="0,0,12,0" />
+                    <Button Content="Run selected" Click="RunSelected_Click" IsEnabled="{Binding CanRun}" Margin="0,0,12,0"
+                            Padding="18,7" FontWeight="SemiBold" />
                     <Button Content="{Binding ViewToggleText}" Click="ToggleView_Click" Visibility="{Binding SummaryToggleVisibility}" Margin="0,0,9,0" />
                     <Button Content="Open log folder" Click="OpenLogs_Click" Margin="0,0,9,0" />
                     <Button Content="Close" Click="Close_Click" IsEnabled="{Binding CanClose}" />

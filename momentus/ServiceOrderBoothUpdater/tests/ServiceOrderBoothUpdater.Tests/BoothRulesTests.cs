@@ -27,7 +27,16 @@ public sealed class BoothRulesTests
     }
 
     [Fact]
-    public void Rejects_non_bp_activity()
+    public void Accepts_dc_activity_with_confirmed_template()
+    {
+        var activity = Activity("John accepted booth S2-234, and had these comments none.");
+        activity.Type = "DC";
+
+        Assert.Equal("S2-234", BoothTextParser.TryCreateCandidate(activity)?.BoothNumber);
+    }
+
+    [Fact]
+    public void Rejects_unsupported_activity_type()
     {
         var activity = Activity("John accepted booth S2-234, and had these comments none.");
         activity.Type = "EMR";

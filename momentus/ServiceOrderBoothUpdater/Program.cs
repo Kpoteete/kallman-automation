@@ -250,7 +250,7 @@ internal sealed class BoothUpdateRunner(ApiClient client, CliOptions options)
             {
                 var recentActivities = SearchRecentBoothActivities(since, runStarted);
                 var recentOrders = SearchRecentOrders(since, runStarted);
-                Console.WriteLine($"Found {recentActivities.Count:N0} recent BP activities and {recentOrders.Count:N0} recent active/pending orders.");
+                Console.WriteLine($"Found {recentActivities.Count:N0} recent BP/DC activities and {recentOrders.Count:N0} recent active/pending orders.");
                 keys = recentActivities
                     .Select(ActivityKey)
                     .Concat(recentOrders.Select(OrderKey))
@@ -384,7 +384,7 @@ internal sealed class BoothUpdateRunner(ApiClient client, CliOptions options)
         var rows = new Dictionary<string, ActivitiesModel>(StringComparer.OrdinalIgnoreCase);
         foreach (var field in new[] { nameof(ActivitiesModel.EnteredOn), nameof(ActivitiesModel.ChangedOn) })
         {
-            var filter = $"Type eq 'BP' and {field} ge datetime'{DateText(start)}' and {field} lt datetime'{DateText(end)}'";
+            var filter = $"(Type eq 'BP' or Type eq 'DC') and {field} ge datetime'{DateText(start)}' and {field} lt datetime'{DateText(end)}'";
             foreach (var row in SearchActivities(filter, [field, nameof(ActivitiesModel.Account), nameof(ActivitiesModel.SequenceNumber)]))
                 rows[$"{row.OrganizationCode}|{row.Account}|{row.SequenceNumber}"] = row;
         }
@@ -401,7 +401,7 @@ internal sealed class BoothUpdateRunner(ApiClient client, CliOptions options)
 
     private List<ActivitiesModel> SearchActivitiesForKey(ExhibitorEventKey key)
     {
-        var filter = $"Type eq 'BP' and ExhibitorID eq {key.ExhibitorId} and Event eq {key.EventId}";
+        var filter = $"(Type eq 'BP' or Type eq 'DC') and ExhibitorID eq {key.ExhibitorId} and Event eq {key.EventId}";
         return SearchActivities(filter, [nameof(ActivitiesModel.EnteredOn), nameof(ActivitiesModel.SequenceNumber)]);
     }
 
@@ -508,12 +508,14 @@ internal sealed class BoothUpdateRunner(ApiClient client, CliOptions options)
 
 internal static partial class BoothTextParser
 {
+    private static readonly HashSet<string> SupportedActivityTypes = new(StringComparer.OrdinalIgnoreCase) { "BP", "DC" };
+
     [GeneratedRegex(@"\baccepted\s+booth\s+(?<booth>.+?)\s*,\s*and\s+had\s+these\s+comments\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex AcceptedBoothPattern();
 
     public static BoothCandidate? TryCreateCandidate(ActivitiesModel activity)
     {
-        if (!string.Equals(activity.Type, "BP", StringComparison.OrdinalIgnoreCase))
+        if (!SupportedActivityTypes.Contains(activity.Type ?? ""))
             return null;
         var text = activity.PlainText ?? "";
         var match = AcceptedBoothPattern().Match(text);

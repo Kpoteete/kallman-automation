@@ -4,6 +4,7 @@
     <Project Path="tests/Kallman.Automation.Core.Tests/Kallman.Automation.Core.Tests.csproj" />
   </Folder>
   <Folder Name="/momentus/">
+    <Project Path="momentus/BudgetTransactionsPull/BudgetTransactionsPull.csproj" />
     <Project Path="momentus/ServiceOrderBoothUpdater/ServiceOrderBoothUpdater.csproj" />
     <Project Path="momentus/GLDataMillPull/GLDataMillPull.csproj" />
     <Project Path="momentus/Accounts_Pull/Accounts_Pull.csproj" />
@@ -17,6 +18,7 @@
     <Project Path="momentus/WebsiteCorrectionDaily/WebsiteCorrectionDaily.csproj" />
   </Folder>
   <Folder Name="/momentus/tests/">
+    <Project Path="momentus/BudgetTransactionsPull/tests/BudgetTransactionsPull.Tests/BudgetTransactionsPull.Tests.csproj" />
     <Project Path="momentus/ServiceOrderBoothUpdater/tests/ServiceOrderBoothUpdater.Tests/ServiceOrderBoothUpdater.Tests.csproj" />
     <Project Path="momentus/GLDataMillPull/tests/GLDataMillPull.Tests.csproj" />
   </Folder>
@@ -31,7 +33,5 @@
     <Project Path="projects/DuplicateMerging/DuplicateMerging.csproj" />
     <Project Path="projects/MarketSegmentApplication/MarketSegmentApplication.csproj" />
     <Project Path="projects/RegistrationListAutomation/RegistrationListAutomation.csproj" />
-    <Project Path="projects/StaleMomentusAccountReport/src/StaleMomentusAccountReport/StaleMomentusAccountReport.csproj" />
-    <Project Path="projects/StaleMomentusAccountReport/tests/StaleMomentusAccountReport.Tests/StaleMomentusAccountReport.Tests.csproj" />
   </Folder>
 </Solution>

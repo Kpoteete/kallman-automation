@@ -4,6 +4,7 @@
 
 | Automation | Runtime | Writes source system | Primary output |
 | --- | --- | --- | --- |
+| Budget Transactions Pull | .NET 10 | No | CSV plus checkpoint |
 | Accounts Pull | .NET 10 | No | Excel workbook |
 | Exhibitors Pull | .NET 10 | No | CSV plus checkpoint |
 | Service Orders Full Rebuild | .NET 10 | No | CSV |
@@ -26,7 +27,6 @@
 | Automation | Runtime | Writes source system | Primary output |
 | --- | --- | --- | --- |
 | Accounts Data Integrity Report | .NET 10 | No | Excel audit workbooks |
-| Stale Momentus Account Report | .NET 8 | No | Excel review workbook |
 | Website Validation | Python | No | Excel result workbooks |
 
 ## Repository rules
