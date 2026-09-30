@@ -4,6 +4,7 @@
     <Project Path="tests/Kallman.Automation.Core.Tests/Kallman.Automation.Core.Tests.csproj" />
   </Folder>
   <Folder Name="/momentus/">
+    <Project Path="momentus/ActivePaidInFullAutomation/ActivePaidInFullAutomation.csproj" />
     <Project Path="momentus/BudgetTransactionsPull/BudgetTransactionsPull.csproj" />
     <Project Path="momentus/ServiceOrderBoothUpdater/ServiceOrderBoothUpdater.csproj" />
     <Project Path="momentus/GLDataMillPull/GLDataMillPull.csproj" />
@@ -18,6 +19,7 @@
     <Project Path="momentus/WebsiteCorrectionDaily/WebsiteCorrectionDaily.csproj" />
   </Folder>
   <Folder Name="/momentus/tests/">
+    <Project Path="momentus/ActivePaidInFullAutomation/tests/ActivePaidInFullAutomation.Tests/ActivePaidInFullAutomation.Tests.csproj" />
     <Project Path="momentus/BudgetTransactionsPull/tests/BudgetTransactionsPull.Tests/BudgetTransactionsPull.Tests.csproj" />
     <Project Path="momentus/ServiceOrderBoothUpdater/tests/ServiceOrderBoothUpdater.Tests/ServiceOrderBoothUpdater.Tests.csproj" />
     <Project Path="momentus/GLDataMillPull/tests/GLDataMillPull.Tests.csproj" />

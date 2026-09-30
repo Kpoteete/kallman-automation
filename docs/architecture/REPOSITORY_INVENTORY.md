@@ -16,6 +16,7 @@
 
 | Automation | Runtime | Write risk | Safety model |
 | --- | --- | --- | --- |
+| Active Paid-in-Full Automation | .NET 10 | High | Preview default, exact apply confirmation, fresh-read qualification, post-write verification, and weekly audit workbook |
 | Account Import | .NET 8 | High | Dry-run plus explicit production confirmation |
 | Duplicate Merging | .NET 8 | High | Plan, review, approve, apply |
 | Market Segment Application | .NET 8 | High | Plan, review, approve, apply |
