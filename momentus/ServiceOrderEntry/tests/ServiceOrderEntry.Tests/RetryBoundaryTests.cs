@@ -12,6 +12,17 @@ namespace ServiceOrderEntry.Tests;
 
 public sealed class RetryBoundaryTests
 {
+    internal const string TestSchedule = "Payment Schedule\n50% Deposit: Due upon receipt of invoice.\nPlease refer to your specific contract and invoice for final payment terms and due dates.";
+    internal static readonly byte[] TestContractPdf = MakePdf(TestSchedule);
+    internal static byte[] MakePdf(string text)
+    {
+        var builder = new UglyToad.PdfPig.Writer.PdfDocumentBuilder();
+        var font = builder.AddStandard14Font(UglyToad.PdfPig.Fonts.Standard14Fonts.Standard14Font.Helvetica);
+        var page = builder.AddPage(612, 792);
+        var y = 740;
+        foreach (var line in text.Split('\n')) { page.AddText(line, 10, new UglyToad.PdfPig.Core.PdfPoint(30, y), font); y -= 18; }
+        return builder.Build();
+    }
     internal static BillingConfiguration TestBillingConfiguration() => new()
     { Header = "OrgAccountUDF", Class = "B", Type = "BL", EventSalesNotApplicableCode = "N" }; // Synthetic offline tenant values.
     internal static BillingRequest TestRequest() => new("Offline Test Company", "", "Test", "Contact", "test@example.invalid", "BA", "1 Test Street", "Test City", "", "12345", "USA");
@@ -307,6 +318,10 @@ public sealed class RetryBoundaryTests
             ((HttpClient)field.GetValue(client)!).Dispose();
             field.SetValue(client, new HttpClient(Transport) { BaseAddress = new Uri(Options.BaseUrl) });
             Gateway = new MomentusGateway(Options, client, Delays.Add);
+            var document = new DocumentInfo("C", 11, "contract.pdf", "Contract", "CON")
+                { ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(TestContractPdf)) };
+            Row.PaymentScheduleText = PaymentScheduleExtractor.FromPdf(TestContractPdf);
+            Row.Contracts = ContractRules.Select([new("10", "Exhibitor", 2, document, document.ContentHash, Row.PaymentScheduleText)], []);
             Store = new FileJournalStore(Options.StateFolder);
             var evidence = new OrderEvidence { Identity = OrderIdentity.From(Options, Row), Plan = Row, SendEmail = Options.SendReadyEmail,
                 ActivateOrder = Options.ActivateOrder, ActivateExhibitor = Options.ActivateExhibitor };
@@ -348,17 +363,18 @@ public sealed class RetryBoundaryTests
             OrganizationCode = "10", OrderNumber = 3, Event = 1, Function = 4, Account = "ACCOUNT", BillToAccount = "ACCOUNT", BillToContact = "CONTACT", OrderStatus = "PC"
         };
         public ExhibitorsModel Exhibitor { get; private set; } = new() { OrganizationCode = "10", ExhibitorID = 2, Event = 1, ExhibitorStatus = 35, ExhibitorCategory = "" };
-        private readonly List<DocumentsModel> copies = [];
+        public readonly List<DocumentsModel> Copies = [];
+        public readonly Dictionary<string, byte[]> DocumentData = [];
         private readonly List<DocumentsModel> savedEmails = [];
         public readonly Dictionary<string, AllAccountsModel> Accounts = [];
         public BillingRequest BillingInstructions { get; set; } = TestRequest();
         private readonly Dictionary<string, RelationshipsModel> relationships = [];
-        private readonly List<NotesModel> notes = failingStage == "Update payment schedule note"
-            ? [new NotesModel { SequenceNumber = 12, Class = "SON", Type = "OH", PlainText = "Old terms" }] : [];
-        private readonly DocumentsModel contract = new()
+        public readonly List<NotesModel> Notes = failingStage == "Update payment schedule note"
+            ? [new NotesModel { SequenceNumber = 12, Class = "SON", Type = "OH", Title = ManagedNoteRules.Title, PlainText = "Old terms" }] : [];
+        public readonly List<DocumentsModel> Contracts = [new()
         {
             Type = "C", SequenceNumber = 11, DocumentID = "contract.pdf", Description = "Contract", Category = "CON"
-        };
+        }];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -388,18 +404,16 @@ public sealed class RetryBoundaryTests
                         EventSalesStatus = account.EventSalesStatus, AccountUserFieldSets = [TestFields(BillingInstructions)]
                     });
                 }
-                if (path == "Documents/10/C/11/Download") return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent(Convert.ToBase64String(Encoding.UTF8.GetBytes("Offline attachment")))
-                };
                 if (path.EndsWith("/Download")) return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(copies.Single(x => x.SequenceNumber == int.Parse(path.Split('/')[3])).NewDocumentData)
+                    Content = new StringContent(DocumentData.TryGetValue($"{path.Split('/')[2]}/{path.Split('/')[3]}", out var data)
+                        ? Convert.ToBase64String(data) : path == "Documents/10/C/11/Download" ? Convert.ToBase64String(TestContractPdf)
+                        : Copies.Single(x => x.SequenceNumber == int.Parse(path.Split('/')[3])).NewDocumentData)
                 };
                 var query = Uri.UnescapeDataString(request.RequestUri.Query);
                 if (SearchOverride?.Invoke(request) is { } overridden) return overridden;
-                if (path == "Documents/10") return Search(query.Contains("Type eq 'M'") ? savedEmails : query.Contains("Exhibitor eq") ? [contract] : copies);
-                if (path == "Notes/10") return Search(notes);
+                if (path == "Documents/10") return Search(query.Contains("Type eq 'M'") ? savedEmails : query.Contains("Exhibitor eq") ? Contracts : Copies);
+                if (path == "Notes/10") return Search(Notes);
                 if (path is "Exhibitors/10" or "ServiceOrders/10") return Search(Array.Empty<ExhibitorsModel>());
                 if (path == "Accounts/10")
                 {
@@ -447,17 +461,18 @@ public sealed class RetryBoundaryTests
             {
                 stage = "Copy contract document";
                 var model = JsonConvert.DeserializeObject<DocumentsModel>(body)!;
-                model.SequenceNumber = 22;
-                if (ApplyEffect) copies.Add(model);
+                model.SequenceNumber = Copies.Count == 0 ? 22 : Copies.Max(x => x.SequenceNumber) + 1;
+                model.DocumentID = model.NewFileName;
+                if (ApplyEffect) Copies.Add(model);
                 result = model;
             }
             else if (path.StartsWith("Notes"))
             {
                 stage = request.Method == HttpMethod.Post ? "Add payment schedule note" : "Update payment schedule note";
                 var model = JsonConvert.DeserializeObject<NotesModel>(body)!;
-                model.SequenceNumber = 12;
+                model.SequenceNumber = request.Method == HttpMethod.Post ? (Notes.Count == 0 ? 12 : Notes.Max(x => x.SequenceNumber) + 1) : model.SequenceNumber;
                 model.PlainText = model.Text;
-                if (ApplyEffect) { notes.Clear(); notes.Add(model); }
+                if (ApplyEffect) { Notes.RemoveAll(x => x.SequenceNumber == model.SequenceNumber); Notes.Add(model); }
                 result = model;
             }
             else if (path == "Exhibitors/10/2")

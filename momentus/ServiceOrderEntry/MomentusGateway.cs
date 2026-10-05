@@ -112,6 +112,8 @@ internal sealed class MomentusGateway
         if (orderNumber == 0 || eventId == 0 || functionId == 0 || account.Length == 0)
             throw new InvalidOperationException("Contract PDF copy requires order number, event, function, and account.");
         var data = Convert.ToBase64String(DownloadDocument(source));
+        if (source.ContentHash.Length > 0 && source.ContentHash != BytesHash(Convert.FromBase64String(data)))
+            throw new RecoveryReviewException("REVIEW: source contract content changed; stale copy stopped.");
         var model = new DocumentsModel
         {
             Organization = options.OrganizationCode,
@@ -125,21 +127,71 @@ internal sealed class MomentusGateway
             Function = functionId,
             Account = account
         };
-        var added = CallWrite("Copy contract document", $"org={options.OrganizationCode}; source={source.Type}/{source.SequenceNumber}; order={orderNumber}", model, () => client.Endpoints.Documents.Add(model),
+        var added = CallWrite("Copy contract document", $"org={options.OrganizationCode}; source={source.Type}/{source.SequenceNumber}; hash={BytesHash(Convert.FromBase64String(data))}; order={orderNumber}", model, () => client.Endpoints.Documents.Add(model),
             new() { ["sourceType"] = source.Type, ["sourceSequence"] = source.SequenceNumber.ToString(CultureInfo.InvariantCulture),
-                ["sourceId"] = source.DocumentId, ["contentHash"] = BytesHash(Convert.FromBase64String(data)),
-                ["baseline"] = string.Join(",", GetOrderContractPdfs(orderNumber).Select(x => x.SequenceNumber)) });
+                ["sourceId"] = source.DocumentId, ["sourceOrg"] = options.OrganizationCode, ["contentHash"] = BytesHash(Convert.FromBase64String(data)),
+                ["baseline"] = string.Join(",", GetOrderContractPdfs(orderNumber).Select(x => $"{x.Type}/{x.SequenceNumber}")) });
         if (Value(added.SequenceNumber) == 0) throw new UnknownWriteOutcomeException("Copy contract document", $"org={options.OrganizationCode}; source={source.Type}/{source.SequenceNumber}; order={orderNumber}", new InvalidDataException("Momentus did not return the copied document sequence number."));
+    }
+
+    internal ContractSnapshot ReadContract(DocumentInfo document, string owner, int ownerId)
+    {
+        var bytes = DownloadDocument(document);
+        var hash = BytesHash(bytes);
+        if (document.ContentHash.Length > 0 && document.ContentHash != hash)
+            throw new RecoveryReviewException("REVIEW: contract content changed after selection.");
+        return new(options.OrganizationCode, owner, ownerId, document with { ContentHash = hash }, hash, PaymentScheduleExtractor.FromPdf(bytes));
+    }
+
+    internal ContractSelection ResolveContracts(int exhibitor, int order, DateTime? orderDate)
+    {
+        var source = GetExhibitorContractPdfs(exhibitor).Select(x => ReadContract(x, "Exhibitor", exhibitor)).ToList();
+        var destination = GetOrderContractPdfs(order).Select(x => ReadContract(x, "Order", order)).ToList();
+        var fallback = source.Count == 0 && destination.Count == 0;
+        if (fallback) source = GetNearbyExhibitorPdfs(exhibitor, orderDate).Select(x => ReadContract(x, "Nearby", exhibitor))
+            .Where(x => x.PaymentSchedule.Length > 0).ToList();
+        return ContractRules.Select(source, destination, fallback);
+    }
+
+    internal int EnsureContractCopies(ServiceOrdersModel order, RunRow row)
+    {
+        var journal = Journal ?? throw new InvalidOperationException("Contract copies require a journal.");
+        var plan = row.Contracts ?? throw new RecoveryReviewException("REVIEW: missing contract identity plan.");
+        if (plan.ReviewMessage.Length > 0) throw new RecoveryReviewException(plan.ReviewMessage);
+        var copied = 0;
+        foreach (var source in ContractRules.Ordered(plan.Sources).GroupBy(x => x.ContentHash).Select(x => x.First()))
+        {
+            _ = ReadContract(source.Document, source.Owner, source.OwnerId); // Reject revised bytes before copy/reuse.
+            var destination = GetOrderContractPdfs(Value(order.OrderNumber)).Select(x => ReadContract(x, "Order", Value(order.OrderNumber)))
+                .Where(x => x.ContentHash == source.ContentHash).ToList();
+            if (destination.Count > 1) throw new RecoveryReviewException("REVIEW: multiple indistinguishable destination contracts; no copy attempted.");
+            var known = row.ContractCopies.SingleOrDefault(x => x.Source.Organization == source.Organization &&
+                x.Source.Document.Type == source.Document.Type && x.Source.Document.SequenceNumber == source.Document.SequenceNumber);
+            if (known is not null && (known.Source.ContentHash != source.ContentHash || destination.Count != 1 ||
+                destination[0].Document.Type != known.Destination.Type || destination[0].Document.SequenceNumber != known.Destination.SequenceNumber))
+                throw new RecoveryReviewException("REVIEW: journaled contract destination is missing or changed; no replacement copy attempted.");
+            if (destination.Count == 0)
+            {
+                CopyContractPdfToOrder(source.Document, order);
+                copied++;
+                destination = GetOrderContractPdfs(Value(order.OrderNumber)).Select(x => ReadContract(x, "Order", Value(order.OrderNumber)))
+                    .Where(x => x.ContentHash == source.ContentHash).ToList();
+            }
+            if (destination.Count != 1) throw new RecoveryReviewException("REVIEW: contract copy readback did not identify one exact content match.");
+            var identity = new ContractCopyIdentity(source, destination[0].Document, destination[0].ContentHash);
+            row.ContractCopies.RemoveAll(x => x.Source.Document.Type == source.Document.Type && x.Source.Document.SequenceNumber == source.Document.SequenceNumber);
+            row.ContractCopies.Add(identity);
+            journal.Save();
+        }
+        return copied;
     }
 
     public string ExtractPaymentSchedule(IEnumerable<DocumentInfo> documents)
     {
-        foreach (var document in documents)
-        {
-            var result = PaymentScheduleExtractor.FromPdf(DownloadDocument(document));
-            if (result.Length > 0) return result;
-        }
-        return "";
+        var selection = ContractRules.Select(documents.Select(x => ReadContract(x, "Candidate", 0)), []);
+        if (selection.ReviewMessage.Length > 0 && selection.Sources.Any(x => x.PaymentSchedule.Length > 0))
+            throw new RecoveryReviewException(selection.ReviewMessage);
+        return selection.PaymentSchedule;
     }
 
     public IReadOnlyList<NotesModel> GetOrderSonNotes(int orderNumber)
@@ -152,39 +204,45 @@ internal sealed class MomentusGateway
 
     public string SavePaymentScheduleNote(int orderNumber, string text)
     {
+        var journal = Journal ?? throw new InvalidOperationException("Managed note writes require a journal.");
         var notes = GetOrderSonNotes(orderNumber);
-        if (notes.Count > 1) throw new InvalidOperationException("Multiple SON order notes exist; no note was changed.");
+        var decision = ManagedNoteRules.Resolve(notes, journal.Evidence.Stages);
+        if (decision.Action == "REVIEW") throw new RecoveryReviewException(decision.Message);
+        var plan = journal.Evidence.Plan;
+        var existing = decision.Note;
+        if (plan.ManagedNoteSequence.HasValue && (existing is null || Value(existing.SequenceNumber) != plan.ManagedNoteSequence))
+            throw new RecoveryReviewException("REVIEW: managed payment-note identity changed after evaluation.");
+        if (existing is not null && plan.ManagedNoteContentHash.Length > 0 &&
+            ManagedNoteRules.ContentHash(ManagedNoteRules.Text(existing)) != plan.ManagedNoteContentHash &&
+            ManagedNoteRules.ContentHash(ManagedNoteRules.Text(existing)) != ManagedNoteRules.ContentHash(text))
+            throw new RecoveryReviewException("REVIEW: managed payment-note content changed after evaluation.");
         var action = "ADDED";
-        if (notes.Count == 0)
+        if (existing is null)
         {
             var model = new NotesModel
             {
-                OrganizationCode = options.OrganizationCode,
-                Type = USISDKConstants.NoteType.OrderNote,
-                OrderNumber = orderNumber,
-                Class = "SON",
-                Title = "Payment Schedule",
-                Text = text
+                OrganizationCode = options.OrganizationCode, Type = USISDKConstants.NoteType.OrderNote,
+                OrderNumber = orderNumber, Class = "SON", Title = ManagedNoteRules.Title, Text = text
             };
-            CallWrite("Add payment schedule note", $"org={options.OrganizationCode}; order={orderNumber}; type=OH; class=SON", model, () => client.Endpoints.Notes.Add(model), new() { ["baseline"] = "" });
+            CallWrite("Add payment schedule note", $"org={options.OrganizationCode}; order={orderNumber}; type=OH; class=SON", model,
+                () => client.Endpoints.Notes.Add(model), new() { ["baseline"] = string.Join(",", notes.Select(x => x.SequenceNumber)), ["noteHash"] = ManagedNoteRules.ContentHash(text) });
         }
-        else if (PaymentScheduleExtractor.NormalizeForComparison(notes[0].PlainText) == PaymentScheduleExtractor.NormalizeForComparison(text))
-        {
-            return "ALREADY MATCHED";
-        }
+        else if (ManagedNoteRules.ContentHash(ManagedNoteRules.Text(existing)) == ManagedNoteRules.ContentHash(text) && existing.Title == ManagedNoteRules.Title)
+            action = "ALREADY MATCHED";
         else
         {
-            var original = JsonConvert.SerializeObject(notes[0]);
-            notes[0].Class = "SON";
-            notes[0].Title = "Payment Schedule";
-            notes[0].Text = text;
-            CallWrite("Update payment schedule note", $"org={options.OrganizationCode}; order={orderNumber}; note={notes[0].SequenceNumber}", notes[0], () => client.Endpoints.Notes.Update(notes[0]), new() { ["original"] = original });
+            var original = JsonConvert.SerializeObject(existing);
+            existing.Class = "SON"; existing.Title = ManagedNoteRules.Title; existing.Text = text;
+            CallWrite("Update payment schedule note", $"org={options.OrganizationCode}; order={orderNumber}; note={existing.SequenceNumber}", existing,
+                () => client.Endpoints.Notes.Update(existing), new() { ["original"] = original, ["noteHash"] = ManagedNoteRules.ContentHash(text) });
             action = "UPDATED";
         }
-
-        var verified = GetOrderSonNotes(orderNumber);
-        if (verified.Count != 1 || PaymentScheduleExtractor.NormalizeForComparison(verified[0].PlainText) != PaymentScheduleExtractor.NormalizeForComparison(text))
-            throw new InvalidOperationException("SON Payment Schedule note readback did not match the Contract PDF text.");
+        var verified = ManagedNoteRules.Resolve(GetOrderSonNotes(orderNumber), journal.Evidence.Stages);
+        if (verified.Action == "REVIEW" || verified.Note is null || ManagedNoteRules.ContentHash(ManagedNoteRules.Text(verified.Note)) != ManagedNoteRules.ContentHash(text))
+            throw new RecoveryReviewException("REVIEW: managed SON Payment Schedule readback failed; unrelated SON notes are preserved.");
+        plan.ManagedNoteSequence = Value(verified.Note.SequenceNumber);
+        plan.ManagedNoteContentHash = ManagedNoteRules.ContentHash(text);
+        journal.Save();
         return action;
     }
 
@@ -651,10 +709,13 @@ internal sealed class MomentusGateway
                 var baseline = stage.Source["baseline"].Split(',').ToHashSet();
                 var matches = GetOrderContractPdfs(Value(intended.Order)).Where(x =>
                     Value(returned?.SequenceNumber) > 0 ? x.SequenceNumber == Value(returned!.SequenceNumber) && x.Type == returned.Type :
-                    !baseline.Contains(x.SequenceNumber.ToString(CultureInfo.InvariantCulture)) && TextRules.Same(x.Description, intended.Description) && TextRules.Same(x.Category, intended.Category))
+                    !baseline.Contains($"{x.Type}/{x.SequenceNumber}") && !baseline.Contains(x.SequenceNumber.ToString(CultureInfo.InvariantCulture)) && TextRules.Same(x.Category, intended.Category))
                     .Where(x => BytesHash(DownloadDocument(x)) == stage.Source["contentHash"]).ToList();
                 if (matches.Count != 1) return false;
                 var match = matches[0];
+                stage.Source["destinationType"] = match.Type;
+                stage.Source["destinationSequence"] = match.SequenceNumber.ToString(CultureInfo.InvariantCulture);
+                stage.Source["destinationHash"] = stage.Source["contentHash"];
                 verified = new DocumentsModel { Type = match.Type, SequenceNumber = match.SequenceNumber, DocumentID = match.DocumentId, Order = intended.Order };
                 break;
             }
@@ -665,9 +726,11 @@ internal sealed class MomentusGateway
                 var returned = JsonConvert.DeserializeObject<NotesModel>(stage.Result);
                 var sequence = Value(returned?.SequenceNumber) > 0 ? Value(returned!.SequenceNumber) : Value(intended.SequenceNumber);
                 var matches = GetOrderSonNotes(Value(intended.OrderNumber)).Where(x =>
-                    (sequence == 0 || Value(x.SequenceNumber) == sequence) && TextRules.Same(x.Title, intended.Title) &&
+                    (sequence == 0 ? !stage.Source.GetValueOrDefault("baseline", "").Split(',').Contains(Clean(x.SequenceNumber)) : Value(x.SequenceNumber) == sequence) && TextRules.Same(x.Title, intended.Title) &&
                     PaymentScheduleExtractor.NormalizeForComparison(First(x.PlainText ?? "", x.Text ?? "")) == PaymentScheduleExtractor.NormalizeForComparison(intended.Text)).ToList();
                 if (matches.Count != 1 || Value(matches[0].SequenceNumber) == 0) return false;
+                stage.Source["managedNoteSequence"] = Clean(matches[0].SequenceNumber);
+                stage.Source["noteHash"] = ManagedNoteRules.ContentHash(ManagedNoteRules.Text(matches[0]));
                 verified = matches[0];
                 break;
             }

@@ -20,7 +20,7 @@ public sealed class SearchCompletenessTests
     {
         SequenceNumber = id, Type = type, DocumentID = $"{id}.pdf", Category = "CON", Description = description
     };
-    private static NotesModel Note(int id) => new() { SequenceNumber = id, Type = "OH", Class = "SON", PlainText = "Payment Schedule\n50% Deposit" };
+    private static NotesModel Note(int id) => new() { SequenceNumber = id, Type = "OH", Class = "SON", Title = ManagedNoteRules.Title, PlainText = RetryBoundaryTests.TestSchedule };
     private static ActivitiesModel Activity(int id, string booth, DateTime entered) => new()
     {
         SequenceNumber = id, EnteredOn = entered, PlainText = $"Accepted booth {booth}, and had these comments: ok"
@@ -294,7 +294,7 @@ public sealed class SearchCompletenessTests
         Pages(s, "Documents", [Document(10, "Other contract")], [Document(11)]);
         var docs = exhibitor ? s.Gateway.GetExhibitorContractPdfs(2) : s.Gateway.GetOrderContractPdfs(3);
         Assert.Equal(2, docs.Count);
-        Assert.True(Runner.HasMatchingDocument(docs, new("C", 11, "11.pdf", "Contract", "CON")));
+        Assert.False(Runner.HasMatchingDocument(docs, new("C", 11, "11.pdf", "Contract", "CON"))); // Description/metadata without content evidence cannot establish equality.
     }
 
     [Fact]
@@ -313,7 +313,7 @@ public sealed class SearchCompletenessTests
         using var s = new RetryBoundaryTests.Scenario();
         Pages(s, "Notes", [Note(1)], [Note(2)]);
         Assert.Equal(2, s.Gateway.GetOrderSonNotes(3).Count);
-        Assert.Throws<InvalidOperationException>(() => s.Gateway.SavePaymentScheduleNote(3, "new terms"));
+        Assert.Throws<RecoveryReviewException>(() => s.Gateway.SavePaymentScheduleNote(3, "new terms"));
         Assert.Empty(s.Transport.Mutations);
     }
 
@@ -456,6 +456,6 @@ public sealed class SearchCompletenessTests
         using var s = new RetryBoundaryTests.Scenario();
         var first = Note(1); first.PlainText = "Other instructions";
         Pages(s, "Notes", [first], [Note(2)]);
-        Assert.Contains(s.Gateway.GetOrderSonNotes(3), n => n.SequenceNumber == 2 && n.PlainText == s.Row.PaymentScheduleText);
+        Assert.Contains(s.Gateway.GetOrderSonNotes(3), n => n.SequenceNumber == 2 && ManagedNoteRules.ContentHash(n.PlainText) == ManagedNoteRules.ContentHash(s.Row.PaymentScheduleText));
     }
 }

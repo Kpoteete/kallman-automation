@@ -9,20 +9,21 @@ internal static partial class PaymentScheduleExtractor
     public static string FromPdf(byte[] data)
     {
         using var document = PdfDocument.Open(data);
-        foreach (var page in document.GetPages())
-        {
-            var result = FromText(ContentOrderTextExtractor.GetText(page));
-            if (result.Length > 0) return result;
-        }
-        return "";
+        return FromText(string.Join("\n", document.GetPages().Select(page => ContentOrderTextExtractor.GetText(page))));
     }
 
     public static string FromText(string? text)
     {
         var normalized = NormalizeLigatures(text ?? "").Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
-        var match = SchedulePattern().Match(normalized);
-        if (!match.Success) return "";
-        var lines = match.Value.Split('\n')
+        var schedules = SchedulePattern().Matches(normalized).Select(match => Format(match.Value)).ToList();
+        if (schedules.Select(NormalizeForComparison).Distinct(StringComparer.Ordinal).Count() > 1)
+            throw new RecoveryReviewException("REVIEW: one contract contains conflicting complete Payment Schedules.");
+        return schedules.FirstOrDefault() ?? "";
+    }
+
+    private static string Format(string value)
+    {
+        var lines = value.Split('\n')
             .Select(x => MultiSpace().Replace(x.Trim(), " "))
             .Select(x => x.Length > 0 && x[0] == '?' ? x[1..].TrimStart() : x)
             .Where(x => x.Length > 0);

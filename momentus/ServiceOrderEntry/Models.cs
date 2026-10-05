@@ -4,7 +4,10 @@ namespace ServiceOrderEntry;
 
 internal sealed record SalesRepLookup(string DisplayName, string UdfCode, string AccountCode);
 internal sealed record CategoryLookup(string Description, int Sequence, IReadOnlyList<string> Identifiers);
-internal sealed record DocumentInfo(string Type, int SequenceNumber, string DocumentId, string Description, string Category, DateTime? EnteredOn = null);
+internal sealed record DocumentInfo(string Type, int SequenceNumber, string DocumentId, string Description, string Category, DateTime? EnteredOn = null)
+{
+    public string ContentHash { get; init; } = "";
+}
 internal sealed record OrderItemInfo(int LineNumber, string ResourceCode, string Description, string AlternateDescription)
 {
     public string SearchText => string.Join(" | ", new[] { Description, AlternateDescription, ResourceCode }.Where(x => !string.IsNullOrWhiteSpace(x)));
@@ -43,6 +46,10 @@ internal sealed record AccountInfo(
 
 internal sealed class RunRow
 {
+    public ContractSelection? Contracts { get; set; }
+    public List<ContractCopyIdentity> ContractCopies { get; set; } = [];
+    public int? ManagedNoteSequence { get; set; }
+    public string ManagedNoteContentHash { get; set; } = "";
     public int BillingVersion { get; set; }
     public string BillingSourceAccount { get; set; } = "";
     public BillingConfiguration? BillingConfiguration { get; set; }

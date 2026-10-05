@@ -267,30 +267,14 @@ internal sealed class Runner(CliOptions options)
         var items = gateway.GetOrderItems(orderNumber);
         var category = CategoryRules.Resolve(items, categories);
         var exhibitorCategories = ExhibitorCategoryRules.Resolve(exhibitor.ExhibitorCategory, category.Description, items, MomentusGateway.ExhibitorStatePavilionUdf(exhibitor));
-        var exhibitorDocuments = gateway.GetExhibitorContractPdfs(exhibitorId);
-        var orderDocuments = gateway.GetOrderContractPdfs(orderNumber);
-        var usedNearbyFallback = false;
-        if (exhibitorDocuments.Count == 0 && orderDocuments.Count == 0)
-        {
-            var nearby = gateway.GetNearbyExhibitorPdfs(exhibitorId, DateValue(order.OrderDate));
-            foreach (var document in nearby)
-            {
-                if (gateway.ExtractPaymentSchedule([document]).Length == 0) continue;
-                exhibitorDocuments = [document];
-                usedNearbyFallback = true;
-                break;
-            }
-        }
-        var copiesNeeded = exhibitorDocuments.Count(source => !HasMatchingDocument(orderDocuments, source));
-        var paymentSchedule = gateway.ExtractPaymentSchedule(exhibitorDocuments.Concat(orderDocuments));
-        var sonNotes = gateway.GetOrderSonNotes(orderNumber);
-        var sonAction = sonNotes.Count switch
-        {
-            0 => "ADD",
-            1 when PaymentScheduleExtractor.NormalizeForComparison(First(sonNotes[0].PlainText, sonNotes[0].Text)) == PaymentScheduleExtractor.NormalizeForComparison(paymentSchedule) => "KEEP EXISTING",
-            1 => "UPDATE",
-            _ => "REVIEW"
-        };
+        var contracts = gateway.ResolveContracts(exhibitorId, orderNumber, DateValue(order.OrderDate));
+        var exhibitorDocuments = contracts.Sources.Select(x => x.Document).ToList();
+        var orderDocuments = contracts.OrderDocuments.Select(x => x.Document).ToList();
+        var copiesNeeded = exhibitorDocuments.GroupBy(x => x.ContentHash).Count(g => !HasMatchingDocument(orderDocuments, g.First()));
+        var paymentSchedule = contracts.PaymentSchedule;
+        var noteDecision = ManagedNoteRules.Resolve(gateway.GetOrderSonNotes(orderNumber));
+        var sonAction = noteDecision.Action == "OWNED" ?
+            (ManagedNoteRules.ContentHash(ManagedNoteRules.Text(noteDecision.Note!)) == ManagedNoteRules.ContentHash(paymentSchedule) ? "KEEP EXISTING" : "UPDATE") : noteDecision.Action;
         var booth = gateway.GetBoothNumber(exhibitorId, eventId);
         var row = new RunRow
         {
@@ -306,11 +290,13 @@ internal sealed class Runner(CliOptions options)
             ExhibitorCategoriesToRemove = ExhibitorCategoryRules.Format(exhibitorCategories.Remove),
             FinalExhibitorCategories = ExhibitorCategoryRules.Format(exhibitorCategories.Final), ApprovalNeeded = exhibitorCategories.ApprovalNeeded,
             ContractPdfCount = exhibitorDocuments.Count, ContractPdfCopiesNeeded = copiesNeeded,
-            ContractPdfCopyStatus = usedNearbyFallback
-                ? $"WOULD COPY FALLBACK PDF {exhibitorDocuments[0].SequenceNumber} ({exhibitorDocuments[0].EnteredOn:yyyy-MM-dd HH:mm})"
+            ContractPdfCopyStatus = contracts.NearbyFallback && exhibitorDocuments.Count > 0
+                ? $"WOULD COPY {copiesNeeded} FALLBACK PDF(S)"
                 : copiesNeeded == 0 ? "ALREADY COPIED OR NONE FOUND" : "WOULD COPY",
+            Contracts = contracts, ManagedNoteSequence = noteDecision.Note is null ? null : Value(noteDecision.Note.SequenceNumber),
+            ManagedNoteContentHash = noteDecision.Note is null ? "" : ManagedNoteRules.ContentHash(ManagedNoteRules.Text(noteDecision.Note)),
             PaymentScheduleText = paymentSchedule, PaymentScheduleNoteAction = sonAction,
-            PaymentScheduleDecisionMessage = sonNotes.Count > 1 ? $"Found {sonNotes.Count} existing SON order notes." : "",
+            PaymentScheduleDecisionMessage = string.Join(" ", new[] { contracts.ReviewMessage, noteDecision.Message }.Where(x => x.Length > 0)),
             ReadyEmailRecipient = "kylep@kallman.com",
             ExistingBillToAccount = billAccount, ExistingBillToContact = billContact, RequestedBilling = request,
             FinalBillToAccount = billAccount.AccountCode, ProposedBoothNumber = booth
@@ -324,9 +310,7 @@ internal sealed class Runner(CliOptions options)
         return row;
     }
 
-    internal static bool HasMatchingDocument(IEnumerable<DocumentInfo> orderDocuments, DocumentInfo source) => orderDocuments.Any(x =>
-        TextRules.Same(x.Description, source.Description) &&
-        (TextRules.Same(x.Category, source.Category) || TextRules.Same(x.Category, "CON")));
+    internal static bool HasMatchingDocument(IEnumerable<DocumentInfo> orderDocuments, DocumentInfo source) => orderDocuments.Any(x => ContractRules.SameContent(x, source));
 
     internal static void DecideAccountAndAddress(MomentusGateway gateway, RunRow row)
     {
@@ -480,6 +464,9 @@ internal sealed class Runner(CliOptions options)
                 throw new InvalidOperationException("Record changed after evaluation and is no longer eligible (expected order PC and exhibitor 35).");
             }
 
+            if (row.Contracts is null || row.Contracts.ReviewMessage.Length > 0 || row.Contracts.ScheduleSource is null ||
+                ManagedNoteRules.ContentHash(row.Contracts.PaymentSchedule) != ManagedNoteRules.ContentHash(row.PaymentScheduleText))
+                throw new RecoveryReviewException("REVIEW: contract/schedule identity is unresolved or conflicts with the saved plan.");
             BillingGuard.Preflight(gateway, row, currentOrder, journal);
             journal.Save();
             var originalBillToAccount = row.ExistingBillToAccount.AccountCode;
@@ -544,21 +531,9 @@ internal sealed class Runner(CliOptions options)
             BillingGuard.VerifyFinal(gateway, row);
             journal.Save();
 
-            var sourceDocuments = gateway.GetExhibitorContractPdfs(row.ExhibitorId);
-            var orderDocuments = gateway.GetOrderContractPdfs(row.OrderNumber).ToList();
-            if (sourceDocuments.Count == 0 && orderDocuments.Count == 0)
-            {
-                sourceDocuments = gateway.GetNearbyExhibitorPdfs(row.ExhibitorId, row.OrderDate)
-                    .Where(x => gateway.ExtractPaymentSchedule([x]).Length > 0).Take(1).ToList();
-            }
-            var copied = 0;
-            foreach (var source in sourceDocuments.Where(x => !HasMatchingDocument(orderDocuments, x)))
-            {
-                gateway.CopyContractPdfToOrder(source, verifiedOrder);
-                copied++;
-                orderDocuments = gateway.GetOrderContractPdfs(row.OrderNumber).ToList();
-                if (!HasMatchingDocument(orderDocuments, source)) throw new InvalidOperationException($"Contract PDF copy readback failed for source document {source.SequenceNumber}.");
-            }
+            var sourceDocuments = row.Contracts?.Sources.Select(x => x.Document).ToList()
+                ?? throw new RecoveryReviewException("REVIEW: legacy plan lacks contract identity evidence.");
+            var copied = gateway.EnsureContractCopies(verifiedOrder, row);
             row.ContractPdfCopyStatus = copied == 0 ? "ALREADY COPIED OR NONE FOUND" : $"COPIED {copied}";
             gateway.VerifyUndispatched("Copy contract document");
 
