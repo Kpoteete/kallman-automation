@@ -71,6 +71,38 @@ internal static class HandoffRules
             includeActivation && evidence.ActivateOrder && !evidence.Plan.ApprovalNeeded && !Has("Activate order"))
             throw new RecoveryReviewException("REVIEW: required order stages are not all Verified; activation is prohibited.");
     }
+
+    public static void VerifyRetained(MomentusGateway gateway, OrderEvidence evidence, ServiceOrdersModel? current = null)
+    {
+        RequireOrderStages(evidence, includeActivation: true);
+        var handoff = evidence.Handoff ?? throw new RecoveryReviewException("REVIEW: completed order lacks verified handoff evidence.");
+        var identity = evidence.Identity;
+        var row = evidence.Plan;
+        current ??= gateway.GetOrder(identity.Order);
+        var committed = handoff.Order;
+        var activated = evidence.Stages.Any(x => x.Operation == "Activate order" && x.Status == StageStatus.Verified);
+        if (handoff.EventId != identity.Event || handoff.ExhibitorId != identity.Exhibitor || handoff.OrderNumber != identity.Order ||
+            current.OrganizationCode != identity.Organization || current.OrderNumber != identity.Order || current.Event != identity.Event || current.Exhibitor != identity.Exhibitor ||
+            !TextRules.Same(current.OrderStatus, activated ? "A" : "PC") || current.OrderDate != handoff.OrderDate ||
+            !TextRules.Same(current.BillToAccount, committed.BillAccount) || !TextRules.Same(current.BillToContact, committed.BillContact) ||
+            !TextRules.Same(current.OrderAccountRep, committed.Rep) || current.Category != committed.Category || !TextRules.Same(current.BoothNumber, committed.Booth) ||
+            gateway.GetAccount(handoff.Billing.Account.AccountCode) != handoff.Billing.Account || gateway.GetAccount(handoff.Billing.Contact.AccountCode) != handoff.Billing.Contact)
+            throw new RecoveryReviewException("REVIEW: completed order's effective final identity/state differs from its verified handoff.");
+        var source = gateway.GetAccountModel(row.BillingSourceAccount);
+        if (!TextRules.Same(current.Account, source.AccountCode) || !TextRules.Same(source.AccountCode, row.BillingSourceAccount) ||
+            row.BillingConfiguration is null || !row.BillingConfiguration.SameAs(gateway.BillingConfiguration) ||
+            MomentusGateway.BillingFrom(source, gateway.BillingConfiguration) != row.RequestedBilling)
+            throw new RecoveryReviewException("REVIEW: completed order's billing instructions/configuration changed.");
+        var note = ManagedNoteRules.Resolve(gateway.GetOrderSonNotes(identity.Order), evidence.Stages);
+        if (note.Action != "OWNED" || note.Note?.SequenceNumber != handoff.NoteSequence || ManagedNoteRules.ContentHash(ManagedNoteRules.Text(note.Note!)) != handoff.NoteHash)
+            throw new RecoveryReviewException("REVIEW: completed order's managed payment note differs from its verified handoff.");
+        PlanGuard.ValidateContracts(gateway, row, evidence);
+        var inputs = row.DecisionInputs ?? throw new RecoveryReviewException("REVIEW: completed order lacks decision evidence.");
+        PlanGuard.ValidateRetainedIdentities(current, gateway.GetExhibitor(identity.Exhibitor), inputs);
+        if (!gateway.GetOrderItems(identity.Order).OrderBy(x => x.LineNumber).SequenceEqual(inputs.Items.OrderBy(x => x.LineNumber)) ||
+            gateway.GetBoothEvidence(identity.Exhibitor, identity.Event) != inputs.Booth)
+            throw new RecoveryReviewException("REVIEW: completed order's item/booth evidence changed.");
+    }
 }
 
 internal sealed record ActivationDecision(bool Allowed, bool AlreadyVerified, string Message, ExhibitorsModel Exhibitor);
@@ -80,9 +112,20 @@ internal static class ActivationRules
         x.Identity.Endpoint == scope.Endpoint && x.Identity.Organization == scope.Organization && x.Identity.Exhibitor == scope.Exhibitor && x.Identity.Event == scope.Event).ToList();
     public static ActivationDecision Check(MomentusGateway gateway, OrderEvidence owner, IReadOnlyList<OrderEvidence> records)
     {
-        var orders = gateway.GetExhibitorOrders(owner.Identity.Exhibitor, owner.Identity.Event);
-        var exhibitor = gateway.GetExhibitor(owner.Identity.Exhibitor);
-        if (exhibitor.ExhibitorID != owner.Identity.Exhibitor || exhibitor.Event != owner.Identity.Event) throw new RecoveryReviewException("REVIEW: activation exhibitor/event identity conflicts.");
+        IReadOnlyList<ServiceOrdersModel> ReadOrders()
+        {
+            try { return gateway.GetExhibitorOrders(owner.Identity.Exhibitor, owner.Identity.Event); }
+            catch (DecisionSearchException ex) { throw new RecoveryReviewException("REVIEW: complete activation order set cannot be established. " + ex.Message); }
+        }
+        ExhibitorsModel ReadExhibitor()
+        {
+            var current = gateway.GetExhibitor(owner.Identity.Exhibitor);
+            if (current.OrganizationCode != owner.Identity.Organization || current.ExhibitorID != owner.Identity.Exhibitor || current.Event != owner.Identity.Event)
+                throw new RecoveryReviewException("REVIEW: activation exhibitor/organization/event identity conflicts.");
+            return current;
+        }
+        var orders = ReadOrders();
+        var exhibitor = ReadExhibitor();
         if (ExhibitorCategoryRules.HasCode(exhibitor.ExhibitorCategory, ExhibitorCategoryRules.Hold) || ExhibitorCategoryRules.HasCode(exhibitor.ExhibitorCategory, ExhibitorCategoryRules.ApprovalNeeded))
             return new(false, false, "Current Hold or Approval Needed blocks exhibitor activation.", exhibitor);
         var group = Group(records, owner.Identity).Where(x => x.Identity != owner.Identity).Append(owner).ToList();
@@ -103,16 +146,16 @@ internal static class ActivationRules
             HandoffRules.RequireOrderStages(record, includeActivation: true);
             var current = orders.SingleOrDefault(x => x.OrderNumber == record.Identity.Order);
             if (current is null) throw new RecoveryReviewException("REVIEW: journaled order is absent from the complete exhibitor/event order set.");
-            var billing = record.Handoff.Billing;
-            var account = gateway.GetAccount(billing.Account.AccountCode);
-            var contact = gateway.GetAccount(billing.Contact.AccountCode);
-            if (account != billing.Account || contact != billing.Contact)
-                throw new RecoveryReviewException("REVIEW: a journaled order's effective billing no longer matches its verified handoff.");
-            var committed = record.Handoff.Order;
-            if (!TextRules.Same(current.BillToAccount, committed.BillAccount) || !TextRules.Same(current.BillToContact, committed.BillContact) ||
-                !TextRules.Same(current.OrderAccountRep, committed.Rep) || current.Category != committed.Category || !TextRules.Same(current.BoothNumber, committed.Booth))
-                throw new RecoveryReviewException("REVIEW: a journaled order no longer references its verified final state.");
+            HandoffRules.VerifyRetained(gateway, record, current);
         }
+        // Group verification can take several reads. Stop if the complete order set changed,
+        // then use the final exhibitor read as the mutation payload, preserving new categories.
+        if (JsonConvert.SerializeObject(orders.OrderBy(x => x.OrderNumber)) != JsonConvert.SerializeObject(ReadOrders().OrderBy(x => x.OrderNumber)))
+            throw new RecoveryReviewException("REVIEW: complete activation order set changed during group verification.");
+        exhibitor = ReadExhibitor();
+        if (ExhibitorCategoryRules.HasCode(exhibitor.ExhibitorCategory, ExhibitorCategoryRules.Hold) || ExhibitorCategoryRules.HasCode(exhibitor.ExhibitorCategory, ExhibitorCategoryRules.ApprovalNeeded))
+            return new(false, false, "Current Hold or Approval Needed blocks exhibitor activation.", exhibitor);
+        foreach (var record in group) PlanGuard.ValidateRetainedIdentities(orders.Single(x => x.OrderNumber == record.Identity.Order), exhibitor, record.Plan.DecisionInputs!);
         var verified = group.Any(x => x.Stages.Any(s => s.Operation == "Activate exhibitor" && s.Status == StageStatus.Verified));
         if (exhibitor.ExhibitorStatus == 2 && verified) return new(false, true, "Exhibitor activation already Verified by the group journal.", exhibitor);
         if (exhibitor.ExhibitorStatus != 35 || verified) throw new RecoveryReviewException("REVIEW: current exhibitor status conflicts with group activation evidence.");

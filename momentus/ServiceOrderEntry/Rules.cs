@@ -177,7 +177,9 @@ internal static class ExhibitorCategoryRules
         if (customBuild && spaceOnly) desired.Add(65);
         if (Contains(category, "trade accelerator")) desired.Add(88);
         if (Contains(category, "trade mission")) desired.Add(22);
-        if (EvidenceRules.Sponsorship(category) || items.Any(x => EvidenceRules.Sponsorship(x.SearchText))) desired.Add(5);
+        var itemEvidence = items.ToList();
+        if (itemEvidence.Any(x => EvidenceRules.Sponsorship(x.SearchText)) ||
+            EvidenceRules.Sponsorship(category) && !itemEvidence.Any(x => EvidenceRules.NegatedSponsorship(x.SearchText))) desired.Add(5);
         if (TextRules.Same(statePavilionUdf, "Y") || TextRules.Same(statePavilionUdf, "Yes")) desired.Add(66);
 
         var add = desired.Except(existing).Order().ToList();
@@ -257,6 +259,8 @@ internal static class EvidenceRules
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     public static bool Sponsorship(string? value)
     {
+        // Labels/resource codes on the same item cannot override explicit negative instructions.
+        if (NegatedSponsorship(value)) return false;
         // Explicit sponsorship terms are affirmative only if their clause contains no negation.
         foreach (var clause in Regex.Split(value ?? "", @"[|;.!?\r\n]+"))
         {
@@ -266,4 +270,7 @@ internal static class EvidenceRules
         }
         return false;
     }
+    public static bool NegatedSponsorship(string? value) => Regex.Split(value ?? "", @"[|;.!?\r\n]+").Any(clause =>
+        Regex.IsMatch(clause, @"\b(?:sponsor|sponsorship|sponsoring)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) &&
+        Regex.IsMatch(clause, @"\b(?:no|not|without|non|none|excluded|exclude|excluding|declined|cancelled|canceled)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
 }

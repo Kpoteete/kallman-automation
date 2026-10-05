@@ -102,23 +102,36 @@ internal sealed class MomentusGateway
 
     public IReadOnlyList<DocumentInfo> GetExhibitorContractPdfs(int exhibitorId)
     {
-        return SearchDocuments($"Exhibitor eq {exhibitorId} and Category eq 'CON'").Select(ToDocument).ToList();
+        var documents = SearchDocuments($"Exhibitor eq {exhibitorId} and Category eq 'CON'");
+        ValidateDocumentScope(documents, null, exhibitorId, contracts: true);
+        return documents.Select(ToDocument).ToList();
     }
 
     public IReadOnlyList<DocumentInfo> GetOrderContractPdfs(int orderNumber)
     {
-        return SearchDocuments($"Order eq {orderNumber} and Category eq 'CON'").Select(ToDocument).ToList();
+        var documents = SearchDocuments($"Order eq {orderNumber} and Category eq 'CON'");
+        ValidateDocumentScope(documents, orderNumber, null, contracts: true);
+        return documents.Select(ToDocument).ToList();
     }
 
     public IReadOnlyList<DocumentInfo> GetNearbyExhibitorPdfs(int exhibitorId, DateTime? orderDate)
     {
         if (!orderDate.HasValue) return [];
-        return SearchDocuments($"Exhibitor eq {exhibitorId}")
+        var documents = SearchDocuments($"Exhibitor eq {exhibitorId}");
+        ValidateDocumentScope(documents, null, exhibitorId, contracts: false);
+        return documents
             .Select(ToDocument)
             .Where(x => IsPdf(x) && x.EnteredOn.HasValue && Math.Abs((x.EnteredOn.Value.Date - orderDate.Value.Date).TotalDays) <= 1)
             .OrderBy(x => Math.Abs((x.EnteredOn!.Value - orderDate.Value).TotalMinutes))
             .ThenByDescending(x => x.SequenceNumber)
             .ToList();
+    }
+
+    private void ValidateDocumentScope(IReadOnlyList<DocumentsModel> documents, int? order, int? exhibitor, bool contracts)
+    {
+        if (documents.Any(x => !string.IsNullOrWhiteSpace(x.Organization) && x.Organization != options.OrganizationCode ||
+            order.HasValue && x.Order != order || exhibitor.HasValue && x.Exhibitor != exhibitor || contracts && x.Category != "CON"))
+            throw new RecoveryReviewException("REVIEW: contract search returned missing/conflicting owner, organization or category identity.");
     }
 
     public void CopyContractPdfToOrder(DocumentInfo source, ServiceOrdersModel order)

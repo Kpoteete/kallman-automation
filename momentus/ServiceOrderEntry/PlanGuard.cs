@@ -26,6 +26,9 @@ internal static class PlanGuard
         if (!condition) throw new RecoveryReviewException($"REVIEW: {input} changed or is unresolved; stale plan stopped before mutation.");
     }
 
+    internal static void ValidateRetainedIdentities(ServiceOrdersModel order, ExhibitorsModel exhibitor, DecisionInputs inputs) =>
+        Require(OrderIdentity(order) == inputs.OrderIdentity && ExhibitorIdentity(exhibitor) == inputs.ExhibitorIdentity, "completed order/exhibitor decision identity");
+
     public static object BeforeWrite(MomentusGateway gateway, RunRow row, string operation, object intent)
     {
         var inputs = row.DecisionInputs ?? throw new RecoveryReviewException("REVIEW: saved plan lacks fresh-input evidence; re-evaluation required.");
@@ -84,7 +87,7 @@ internal static class PlanGuard
         value.Document.Description, value.Document.Category, value.Document.EnteredOn, value.ContentHash });
     static bool SameInventory(IEnumerable<ContractSnapshot> expected, IEnumerable<ContractSnapshot> current) =>
         expected.Select(ContractKey).Order(StringComparer.Ordinal).SequenceEqual(current.Select(ContractKey).Order(StringComparer.Ordinal));
-    internal static void ValidateContracts(MomentusGateway gateway, RunRow row)
+    internal static void ValidateContracts(MomentusGateway gateway, RunRow row, OrderEvidence? evidence = null)
     {
         var plan = row.Contracts!;
         Require(plan is not null && plan.ReviewMessage.Length == 0 && plan.ScheduleSource is not null, "selected contract");
@@ -98,7 +101,7 @@ internal static class PlanGuard
         var originalIds = plan.OrderDocuments.Select(x => (x.Document.Type, x.Document.SequenceNumber)).ToHashSet();
         Require(SameInventory(plan.OrderDocuments, current.Where(x => originalIds.Contains((x.Document.Type, x.Document.SequenceNumber)))), "existing order contract inventory/content");
         var extras = current.Where(x => !originalIds.Contains((x.Document.Type, x.Document.SequenceNumber))).ToList();
-        var copies = gateway.Journal!.Evidence.Stages.Where(x => x.Operation == "Copy contract document" && x.Status == StageStatus.Verified).ToList();
+        var copies = (evidence ?? gateway.Journal!.Evidence).Stages.Where(x => x.Operation == "Copy contract document" && x.Status == StageStatus.Verified).ToList();
         Require(extras.Count == copies.Count && extras.All(x => copies.Any(c =>
             c.Source.GetValueOrDefault("destinationType") == x.Document.Type && c.Source.GetValueOrDefault("destinationSequence") == x.Document.SequenceNumber.ToString(System.Globalization.CultureInfo.InvariantCulture) &&
             c.Source.GetValueOrDefault("destinationHash") == x.ContentHash)), "order contract copies");

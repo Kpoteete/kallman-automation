@@ -37,7 +37,7 @@ public sealed class ContractIdentityTests
     [Fact] public void ConflictingApplicablePdfCandidatesRequireReview()
     {
         using var s = new RetryBoundaryTests.Scenario();
-        s.Transport.Contracts.Add(new() { Type = "C", SequenceNumber = 13, DocumentID = "second.pdf", Description = "Contract", Category = "CON" });
+        s.Transport.Contracts.Add(new() { Type = "C", SequenceNumber = 13, DocumentID = "second.pdf", Description = "Contract", Category = "CON", Exhibitor = 2 });
         s.Transport.DocumentData["C/13"] = RetryBoundaryTests.MakePdf(RetryBoundaryTests.TestSchedule.Replace("50%", "100%"));
         Assert.Contains("conflicting", s.Gateway.ResolveContracts(2, 3, null).ReviewMessage); Assert.Empty(s.Transport.Mutations);
     }

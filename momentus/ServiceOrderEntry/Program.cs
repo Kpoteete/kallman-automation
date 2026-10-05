@@ -235,10 +235,16 @@ internal sealed class Runner(CliOptions options)
                 if (row.ServiceOrderUpdateStatus == "COMPLETED") updated++;
             }
             else if (!options.Apply && row.ProcessingId.Length == 0) row.ServiceOrderUpdateStatus = row.ValidationStatus is "READY" or "PREPARED" ? "WOULD UPDATE" : "NOT ATTEMPTED";
-            else if (attempted >= options.MaxUpdates) row.UpdateMessage = $"Apply limit of {options.MaxUpdates} attempts reached; no write attempted.";
+            else if (attempted >= options.MaxUpdates)
+            {
+                row.UpdateMessage = $"Apply limit of {options.MaxUpdates} attempts reached; no write attempted.";
+                if (options.Apply && row.ValidationStatus is "READY" or "PREPARED")
+                { row.Outcome = "REVIEW"; row.ServiceOrderUpdateStatus = "DEFERRED (ATTEMPT CAP)"; }
+            }
         }
         var path = CsvRunWriter.Write(options.RunFolder, started, rows, options.Apply, runId);
         Console.WriteLine($"READY: {rows.Count(x => x.ValidationStatus == "READY"):N0}; PREPARED: {rows.Count(x => x.ValidationStatus == "PREPARED"):N0}; REVIEW: {rows.Count(x => x.ValidationStatus == "REVIEW"):N0}; ATTEMPTED: {attempted:N0}; COMPLETED: {updated:N0}.");
+        Console.WriteLine($"Outcomes: SUCCESS {rows.Count(x => x.Outcome == "SUCCESS"):N0}; REVIEW {rows.Count(x => x.Outcome == "REVIEW"):N0}; FAILED {rows.Count(x => x.Outcome == "FAILED"):N0}; UNKNOWN {rows.Count(x => x.Outcome == "UNKNOWN"):N0}; shared activation pending {rows.Count(x => x.ExhibitorActivationPending):N0}.");
         Console.WriteLine($"API requests: {gateway.RequestCount:N0}. Run file: {path}");
         return ApplyExitCode(rows);
     }
@@ -476,6 +482,11 @@ internal sealed class Runner(CliOptions options)
             if (evidence.OrderComplete && evidence.Handoff is not null)
             {
                 HandoffRules.RequireOrderStages(evidence, includeActivation: true);
+                HandoffRules.VerifyRetained(gateway, evidence);
+                var retainedExhibitor = gateway.GetExhibitor(row.ExhibitorId);
+                if (retainedExhibitor.OrganizationCode != evidence.Identity.Organization || retainedExhibitor.ExhibitorID != evidence.Identity.Exhibitor ||
+                    retainedExhibitor.Event != evidence.Identity.Event || ExhibitorCategoryRules.HasCode(retainedExhibitor.ExhibitorCategory, ExhibitorCategoryRules.Hold))
+                    throw new RecoveryReviewException("REVIEW: completed order's current exhibitor identity/Hold blocks continued processing.");
                 row.Outcome = "SUCCESS";
                 evidence.Plan = row;
                 evidence.Complete = evidence.Stages.All(x => x.Status == StageStatus.Verified);
@@ -639,7 +650,14 @@ internal sealed class Runner(CliOptions options)
         }
         catch (JournalStorageException ex) { storageFailed = true; row.Outcome = "FAILED"; row.ServiceOrderUpdateStatus = "FAILED"; row.UpdateMessage = ex.Message; throw; }
         catch (RecoveryReviewException ex) { row.Outcome = journal?.Evidence.Stages.Any(x => x.Status is StageStatus.Unknown or StageStatus.Dispatching or StageStatus.Succeeded) == true ? "UNKNOWN" : "REVIEW"; row.ValidationStatus = "REVIEW"; row.ServiceOrderUpdateStatus = "RECOVERY REVIEW"; row.UpdateMessage = ex.Message; }
-        catch (Exception ex) { row.Outcome = "FAILED"; row.ServiceOrderUpdateStatus = "FAILED"; row.UpdateMessage = ex.Message; }
+        catch (Exception ex)
+        {
+            var unresolved = journal?.Evidence.Stages.LastOrDefault(x => x.Status is StageStatus.Dispatching or StageStatus.Unknown or StageStatus.Succeeded);
+            row.Outcome = unresolved is null ? "FAILED" : "UNKNOWN";
+            row.ServiceOrderUpdateStatus = unresolved is null ? "FAILED" : "UNKNOWN WRITE OUTCOME";
+            row.UpdateMessage = unresolved is null ? ex.Message : $"UNKNOWN WRITE OUTCOME: {unresolved.Operation} ({unresolved.Target}) lacks verified readback. Subsequent stages stopped; reconcile before any resubmission. {ex.Message}";
+            if (unresolved?.Operation == "Send ready email") row.ReadyEmailStatus = "UNKNOWN WRITE OUTCOME";
+        }
         finally
         {
             if (journal is not null && !storageFailed)

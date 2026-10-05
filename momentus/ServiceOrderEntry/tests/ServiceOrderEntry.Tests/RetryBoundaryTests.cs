@@ -385,7 +385,7 @@ public sealed class RetryBoundaryTests
             ? [new NotesModel { SequenceNumber = 12, Class = "SON", Type = "OH", OrderNumber = 3, Title = ManagedNoteRules.Title, PlainText = "Old terms" }] : [];
         public readonly List<DocumentsModel> Contracts = [new()
         {
-            Type = "C", SequenceNumber = 11, DocumentID = "contract.pdf", Description = "Contract", Category = "CON"
+            Type = "C", SequenceNumber = 11, DocumentID = "contract.pdf", Description = "Contract", Category = "CON", Exhibitor = 2
         }];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

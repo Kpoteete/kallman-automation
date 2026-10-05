@@ -120,7 +120,7 @@ public sealed class HandoffActivationTests
     [Fact] public void IncompleteActivationOrderSearchFailsClosed()
     {
         using var s = new RetryBoundaryTests.Scenario(); s.Transport.SearchOverride = request => request.RequestUri!.AbsolutePath.EndsWith("/ServiceOrders/10") ? Page([s.Transport.Order], total: 2) : null;
-        s.Apply(); Assert.Equal("FAILED", s.Row.Outcome); Assert.Equal(1, Runner.ApplyExitCode([s.Row])); Assert.Equal(35, s.Transport.Exhibitor.ExhibitorStatus);
+        s.Apply(); Assert.Equal("REVIEW", s.Row.Outcome); Assert.Equal(2, Runner.ApplyExitCode([s.Row])); Assert.Equal(35, s.Transport.Exhibitor.ExhibitorStatus);
     }
     [Theory] [InlineData("retrieval")] [InlineData("parse")] [InlineData("configuration")]
     public void EvaluationOnlyFailuresAreOperationalFailures(string failure)

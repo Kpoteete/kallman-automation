@@ -18,7 +18,7 @@ public sealed class SearchCompletenessTests
     };
     private static DocumentsModel Document(int id, string description = "Contract", string type = "C") => new()
     {
-        SequenceNumber = id, Type = type, DocumentID = $"{id}.pdf", Category = "CON", Description = description, Order = 3
+        SequenceNumber = id, Type = type, DocumentID = $"{id}.pdf", Category = "CON", Description = description, Order = 3, Exhibitor = 2
     };
     private static NotesModel Note(int id) => new() { SequenceNumber = id, Type = "OH", Class = "SON", OrderNumber = 3, Title = ManagedNoteRules.Title, PlainText = RetryBoundaryTests.TestSchedule };
     private static ActivitiesModel Activity(int id, string booth, DateTime entered) => new()
@@ -302,8 +302,8 @@ public sealed class SearchCompletenessTests
     {
         using var s = new RetryBoundaryTests.Scenario();
         var day = new DateTime(2026, 10, 4);
-        Pages(s, "Documents", [new { Type = "C", SequenceNumber = 10, DocumentID = "10.pdf", EnteredOn = day.AddDays(-10) }],
-            [new { Type = "C", SequenceNumber = 11, DocumentID = "11.pdf", EnteredOn = day }]);
+        Pages(s, "Documents", [new { Type = "C", SequenceNumber = 10, DocumentID = "10.pdf", EnteredOn = day.AddDays(-10), Exhibitor = 2 }],
+            [new { Type = "C", SequenceNumber = 11, DocumentID = "11.pdf", EnteredOn = day, Exhibitor = 2 }]);
         Assert.Equal(11, Assert.Single(s.Gateway.GetNearbyExhibitorPdfs(2, day)).SequenceNumber);
     }
 

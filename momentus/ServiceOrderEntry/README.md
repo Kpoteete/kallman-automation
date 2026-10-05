@@ -97,7 +97,7 @@ The customer's selector is authoritative. The revised Step 4 requirements supers
 
 ### Required billing configuration
 
-Supply `--billing-config PATH`, or place `billing-config.json` beside the executable. No tenant Class/Type or Not Applicable status value is guessed. Header/Class/Type must be configured before any processing; Class is one character and Type at most two. SDK documentation defines `OrgAccountUDF` as the organization-account header. The project's tenant-specific billing Class/Type and Not Applicable Account Status code are not established in repository evidence.
+Supply `--billing-config PATH`, or place `billing-config.json` beside the executable. No tenant Class/Type or Not Applicable status value is guessed. Header/Class/Type must be configured before any processing; Class is one character and Type at most two. SDK documentation defines `OrgAccountUDF` as the organization-account header. The tenant-specific billing Class/Type remain unconfirmed. The user-supplied Account Status screenshot on 2026-10-05 confirms Not Applicable status class `0`, status code `0`, and weight `0`.
 
 Configuration shape (empty Class/Type deliberately fail closed; empty status blocks new account creation):
 
@@ -106,13 +106,13 @@ Configuration shape (empty Class/Type deliberately fail closed; empty status blo
   "Header": "OrgAccountUDF",
   "Class": "",
   "Type": "",
-  "EventSalesNotApplicableCode": "",
+  "EventSalesNotApplicableCode": "0",
   "AboveSelectors": ["", "ECA", "No", "N", "Use Above Address"],
   "SeparateSelectors": ["BA", "Yes", "Y", "Below Address"]
 }
 ```
 
-Fill in the actual billing set identity and the tenant's **single-character Account Status code whose class is 0 / Not Applicable**. `NA` is the business label, not an assumed API code. Selector lists can be configured to match documented tenant values; they must be unique and disjoint, and blank can never authorize separate billing. New account creation remains REVIEW until the Not Applicable code is explicitly configured. Configuration/code readback verifies the supplied code; this offline implementation does not independently establish tenant status semantics.
+Fill in the actual billing set identity. The confirmed Kallman **single-character Not Applicable Account Status code is `0`**. `NA` is the business label, not an assumed API code. Selector lists can be configured to match documented tenant values; they must be unique and disjoint, and blank can never authorize separate billing. New account creation remains REVIEW until the Not Applicable code is explicitly configured. Configuration/code readback verifies the supplied code; this offline implementation does not independently establish tenant status semantics.
 
 ### Effective billing and recovery
 
@@ -153,3 +153,5 @@ The ready email is built from the journaled verified final-state packet, using e
 Before optional order activation, every required order-entry/document/note/category/email stage must be Verified. Before optional exhibitor activation, a complete all-status search must establish that no order for that exhibitor/event is PC. Every scoped journaled order must have verified local completion and no unfinished, Unknown, Failed or Review processing. Current Hold or Approval Needed blocks activation. An already active order alone supplies no authorization. Multiple applicable orders can activate the exhibitor automatically only after every relevant PC and unfinished journaled order resolves. Incomplete searches stop activation. Local order completion and pending shared exhibitor activation are persisted separately so interruption or an attempt cap cannot lose the remaining work.
 
 CSV `Outcome` distinguishes SUCCESS, REVIEW, FAILED and UNKNOWN; `ExhibitorActivationPending` identifies deferred group work. Exit codes are 0 for resolved success, 1 for operational failure, 2 for review or deferred activation and 3 for unknown write outcomes (unknown takes precedence). Both journal and report storage are checked before requests. Evaluation and partial/systemic failures return nonzero.
+
+Completed-order recovery rereads committed billing/order identity, source instructions, item/booth evidence, managed-note identity/content and contract inventory/content before reporting READY or finishing shared activation. Group verification repeats the complete order search to detect a changed set and uses a final exhibitor read for Hold/Approval checks and the mutation payload. New unmanaged categories survive that boundary. Contract search results must carry the correct owner/category identity. An accepted write with failed readback remains UNKNOWN in the report while its durable Succeeded stage is preserved for reconciliation. Apply orders deferred by the attempt cap return review status instead of successful completion.

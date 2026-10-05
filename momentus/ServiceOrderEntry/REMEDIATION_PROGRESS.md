@@ -21,3 +21,11 @@ Order activation requires verified local stages. Shared exhibitor activation sea
 Reports distinguish SUCCESS, REVIEW, FAILED and UNKNOWN, plus a shared-activation-pending flag. Exit status is 0 for resolved success, 1 for operational failure, 2 for review/deferred activation and 3 for unknown outcomes. Local reporting storage is checked before requests. Evaluation failures no longer return success.
 
 Offline gate: 32 new handoff/activation regressions; 351 ServiceOrderEntry tests; 415 repository tests passed. Repository Release build succeeded with 0 errors, 7 existing unrelated warnings and 1 transient copy-retry warning from overlapping test execution. No live calls, deployment or push. Fresh final production audit follows this gate.
+
+## Fresh final production audit - complete
+
+The audit inspected the current source rather than relying on the earlier review. Reproductions exposed stale completed-order evidence, a missing recovery organization check, foreign contract ownership, a stale final group payload overwriting newly added Hold/Approval/unmanaged categories, sponsorship labels overriding negation, false-success attempt-cap reporting, and accepted writes with failed readback mislabeled FAILED. Those defects are corrected with 24 focused audit regressions, including the newly confirmed Not Applicable status code `0`. Incomplete activation order searches now explicitly require REVIEW.
+
+Final offline regression gate: 183 focused checks passed. Full ServiceOrderEntry: 375 passed, 0 failed/skipped. Full repository .NET suite: 439 passed, 0 failed/skipped. Earlier Step 1-6 and every-stage interruption/recovery regressions remain included and passed. Final repository Release build succeeded with 0 errors and 0 warnings in the final incremental build; the preceding build reported 7 existing unrelated warnings. No live calls, deploy, publish or push.
+
+No unresolved code-level production defect remains identified. Production startup remains blocked by missing tenant billing UDF-set Class/Type configuration. The supplied workbook proves field mappings but omits those set identifiers; the status screenshot proves Not Applicable code `0`. Synthetic test identifiers are not production evidence. Full findings and current function evidence are in PRODUCTION_READINESS.md.
