@@ -275,7 +275,7 @@ internal sealed class Runner(CliOptions options)
         var noteDecision = ManagedNoteRules.Resolve(gateway.GetOrderSonNotes(orderNumber));
         var sonAction = noteDecision.Action == "OWNED" ?
             (ManagedNoteRules.ContentHash(ManagedNoteRules.Text(noteDecision.Note!)) == ManagedNoteRules.ContentHash(paymentSchedule) ? "KEEP EXISTING" : "UPDATE") : noteDecision.Action;
-        var booth = gateway.GetBoothNumber(exhibitorId, eventId);
+        var booth = gateway.GetBoothEvidence(exhibitorId, eventId);
         var row = new RunRow
         {
             BillingVersion = 1, BillingSourceAccount = order.Account ?? "", BillingConfiguration = gateway.BillingConfiguration,
@@ -299,7 +299,8 @@ internal sealed class Runner(CliOptions options)
             PaymentScheduleDecisionMessage = string.Join(" ", new[] { contracts.ReviewMessage, noteDecision.Message }.Where(x => x.Length > 0)),
             ReadyEmailRecipient = "kylep@kallman.com",
             ExistingBillToAccount = billAccount, ExistingBillToContact = billContact, RequestedBilling = request,
-            FinalBillToAccount = billAccount.AccountCode, ProposedBoothNumber = booth
+            FinalBillToAccount = billAccount.AccountCode, ProposedBoothNumber = booth.Booth,
+            DecisionInputs = PlanGuard.Capture(order, exhibitor, items, booth, categories)
         };
         row.ReadyEmailStatus = gateway.ReadyEmailWasSent(orderNumber) ? "ALREADY SENT" : "WOULD SEND";
         DecideAccountAndAddress(gateway, row);
@@ -461,13 +462,15 @@ internal sealed class Runner(CliOptions options)
                 Value(currentExhibitor.ExhibitorStatus) != (Verified("Activate exhibitor") ? 2 : 35))
             {
                 if (previous is not null) throw new RecoveryReviewException("REVIEW: current statuses conflict with journaled eligibility/activation evidence.");
-                throw new InvalidOperationException("Record changed after evaluation and is no longer eligible (expected order PC and exhibitor 35).");
+                throw new RecoveryReviewException("REVIEW: record status changed after evaluation (expected order PC and exhibitor 35).");
             }
 
             if (row.Contracts is null || row.Contracts.ReviewMessage.Length > 0 || row.Contracts.ScheduleSource is null ||
                 ManagedNoteRules.ContentHash(row.Contracts.PaymentSchedule) != ManagedNoteRules.ContentHash(row.PaymentScheduleText))
                 throw new RecoveryReviewException("REVIEW: contract/schedule identity is unresolved or conflicts with the saved plan.");
             BillingGuard.Preflight(gateway, row, currentOrder, journal);
+            gateway.MutationGuard = (operation, intent) => PlanGuard.BeforeWrite(gateway, row, operation, intent);
+            _ = PlanGuard.BeforeWrite(gateway, row, "Preflight", new object());
             journal.Save();
             var originalBillToAccount = row.ExistingBillToAccount.AccountCode;
             if (row.BillToAddressAction == "CREATE RELATED BILL-TO ACCOUNT")
@@ -540,13 +543,15 @@ internal sealed class Runner(CliOptions options)
             row.PaymentScheduleNoteStatus = gateway.SavePaymentScheduleNote(row.OrderNumber, row.PaymentScheduleText);
             gateway.VerifyUndispatched("Add payment schedule note", "Update payment schedule note");
 
+            currentExhibitor = gateway.GetExhibitor(row.ExhibitorId);
+            _ = PlanGuard.BeforeWrite(gateway, row, "Category preflight", new object());
             var needsCategoryUpdate = !TextRules.Same(currentExhibitor.ExhibitorCategory, row.FinalExhibitorCategories);
             if (needsCategoryUpdate)
             {
                 currentExhibitor.ExhibitorCategory = row.FinalExhibitorCategories;
                 gateway.UpdateExhibitor(currentExhibitor);
                 currentExhibitor = gateway.GetExhibitor(row.ExhibitorId);
-                if (!TextRules.Same(currentExhibitor.ExhibitorCategory, row.FinalExhibitorCategories))
+                if (!ExhibitorCategoryRules.Parse(currentExhibitor.ExhibitorCategory).Where(ExhibitorCategoryRules.ManagedCodes.Contains).SequenceEqual(ExhibitorCategoryRules.Parse(row.FinalExhibitorCategories).Where(ExhibitorCategoryRules.ManagedCodes.Contains)))
                     throw new InvalidOperationException("Exhibitor-category readback did not match the requested values.");
             }
             gateway.VerifyUndispatched("Update exhibitor categories");
@@ -594,6 +599,7 @@ internal sealed class Runner(CliOptions options)
         finally
         {
             if (journal is not null) row.JournalStages = storageFailed ? "Persistence failed; consult last durable journal, not in-memory state." : StageSummary(journal.Evidence);
+            gateway.MutationGuard = null;
             gateway.Journal = null;
         }
     }
@@ -603,7 +609,7 @@ internal sealed class Runner(CliOptions options)
         if (!TextRules.Same(order.OrderAccountRep, row.ProposedOrderAccountRep) || Value(order.Category) != row.ProposedCategory ||
             !TextRules.Same(order.BoothNumber, row.ProposedBoothNumber) || !TextRules.Same(order.BillToAccount, row.FinalBillToAccount) ||
             !TextRules.Same(order.BillToContact, row.FinalBillToContact) || activated && !TextRules.Same(order.OrderStatus, "A"))
-            throw new InvalidOperationException("Service-order readback did not match all requested values.");
+            throw new RecoveryReviewException("REVIEW: current service-order values differ from verified intended values; subsequent mutations stopped.");
     }
     private static int Value(object? x) => x is null ? 0 : Convert.ToInt32(x, CultureInfo.InvariantCulture);
     private static DateTime? DateValue(object? x) => x is null ? null : Convert.ToDateTime(x, CultureInfo.InvariantCulture);

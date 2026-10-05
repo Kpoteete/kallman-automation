@@ -131,13 +131,14 @@ internal static class CategoryRules
     public static CategoryDecision Resolve(IEnumerable<OrderItemInfo> items, IEnumerable<CategoryLookup> lookups)
     {
         var matches = new List<(CategoryLookup Lookup, OrderItemInfo Item, string Identifier)>();
-        foreach (var item in items.Where(x => x.SearchText.Contains("package", StringComparison.OrdinalIgnoreCase)))
+        foreach (var item in items)
         {
             foreach (var lookup in lookups)
             {
                 foreach (var identifier in lookup.Identifiers.Where(x => x.Length > 0))
                 {
-                    if (item.SearchText.Contains(identifier, StringComparison.OrdinalIgnoreCase))
+                    if (TextRules.Same(item.ResourceCode, identifier) || EvidenceRules.Phrase(item.SearchText, "package") &&
+                        (EvidenceRules.Phrase(item.Description, identifier) || EvidenceRules.Phrase(item.AlternateDescription, identifier)))
                         matches.Add((lookup, item, identifier));
                 }
             }
@@ -158,7 +159,7 @@ internal static class ExhibitorCategoryRules
 {
     public const int ApprovalNeeded = 102;
     public const int Hold = 103;
-    private static readonly HashSet<int> ManagedCodes = [1, 2, 3, 5, 9, 22, 65, 66, 88];
+    internal static readonly HashSet<int> ManagedCodes = [1, 2, 3, 5, 9, 22, 65, 66, 88];
 
     public static ExhibitorCategoryDecision Resolve(string? existingValue, string? orderCategoryName, IEnumerable<OrderItemInfo> items, string? statePavilionUdf)
     {
@@ -176,7 +177,7 @@ internal static class ExhibitorCategoryRules
         if (customBuild && spaceOnly) desired.Add(65);
         if (Contains(category, "trade accelerator")) desired.Add(88);
         if (Contains(category, "trade mission")) desired.Add(22);
-        if (Contains(category, "sponsor") || Contains(lineText, "sponsor")) desired.Add(5);
+        if (EvidenceRules.Sponsorship(category) || items.Any(x => EvidenceRules.Sponsorship(x.SearchText))) desired.Add(5);
         if (TextRules.Same(statePavilionUdf, "Y") || TextRules.Same(statePavilionUdf, "Yes")) desired.Add(66);
 
         var add = desired.Except(existing).Order().ToList();
@@ -187,10 +188,18 @@ internal static class ExhibitorCategoryRules
 
     public static string Format(IEnumerable<int> values) => string.Join(",", values.Distinct().Order());
     public static bool HasCode(string? value, int code) => Parse(value).Contains(code);
-    private static List<int> Parse(string? value) => (value ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-        .Select(x => int.TryParse(x, NumberStyles.Integer, CultureInfo.InvariantCulture, out var code) ? code : 0)
-        .Where(x => x > 0).Distinct().Order().ToList();
-    private static bool Contains(string? value, string phrase) => (value ?? "").Contains(phrase, StringComparison.OrdinalIgnoreCase);
+    internal static List<int> Parse(string? value)
+    {
+        var result = new List<int>();
+        foreach (var token in (value ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!int.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out var code) || code <= 0)
+                throw new RecoveryReviewException("REVIEW: current exhibitor categories contain an invalid identifier; preserve them pending review.");
+            result.Add(code);
+        }
+        return result.Distinct().Order().ToList();
+    }
+    private static bool Contains(string? value, string phrase) => EvidenceRules.Phrase(value, phrase);
 }
 
 internal static partial class BoothRules
@@ -238,5 +247,23 @@ internal static class ValidationRules
         if (row.BillToAddressAction.Contains("UPDATE", StringComparison.OrdinalIgnoreCase)) messages.Add("Shared account address updates are not authorized.");
         messages.AddRange(BillingRules.EffectiveErrors(row));
         return messages.Count == 0 ? (row.EffectiveBilling!.AccountCreationPending || row.EffectiveBilling.ContactCreationPending ? "PREPARED" : "READY", "") : ("REVIEW", string.Join(" ", messages.Distinct()));
+    }
+}
+
+internal static class EvidenceRules
+{
+    public static bool Phrase(string? value, string phrase) => Regex.IsMatch(value ?? "",
+        @"(?<![\p{L}\p{N}])" + string.Join(@"[\s_-]+", phrase.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(Regex.Escape)) + @"(?![\p{L}\p{N}])",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    public static bool Sponsorship(string? value)
+    {
+        // Explicit sponsorship terms are affirmative only if their clause contains no negation.
+        foreach (var clause in Regex.Split(value ?? "", @"[|;.!?\r\n]+"))
+        {
+            if (!Regex.IsMatch(clause, @"\b(?:sponsor|sponsorship|sponsoring)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) continue;
+            if (Regex.IsMatch(clause, @"\b(?:no|not|without|non|none|excluded|exclude|excluding|declined|cancelled|canceled)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) continue;
+            return true;
+        }
+        return false;
     }
 }

@@ -322,6 +322,12 @@ public sealed class RetryBoundaryTests
                 { ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(TestContractPdf)) };
             Row.PaymentScheduleText = PaymentScheduleExtractor.FromPdf(TestContractPdf);
             Row.Contracts = ContractRules.Select([new("10", "Exhibitor", 2, document, document.ContentHash, Row.PaymentScheduleText)], []);
+            Row.ProposedCategoryName = "Turnkey";
+            Row.ManagedNoteSequence = Transport.Notes.Count == 0 ? null : Convert.ToInt32(Transport.Notes[0].SequenceNumber);
+            Row.ManagedNoteContentHash = Transport.Notes.Count == 0 ? "" : ManagedNoteRules.ContentHash(ManagedNoteRules.Text(Transport.Notes[0]));
+            Row.DecisionInputs = PlanGuard.Capture(Transport.Order, Transport.Exhibitor, Transport.Items.Select(x => new OrderItemInfo(x.OrderLineNumber ?? 0, x.ResourceCode ?? "", x.Description ?? "", x.AltDesc ?? "") { EvidenceHash = OrderIdentity.Hash(JsonConvert.SerializeObject(x)) }).ToList(),
+                new BoothEvidence("101", OrderIdentity.Hash(JsonConvert.SerializeObject(Transport.Activities.OrderBy(x => x.SequenceNumber)))), [new("Turnkey", 28, ["Turnkey"])]);
+            Transport.Requests.Clear();
             Store = new FileJournalStore(Options.StateFolder);
             var evidence = new OrderEvidence { Identity = OrderIdentity.From(Options, Row), Plan = Row, SendEmail = Options.SendReadyEmail,
                 ActivateOrder = Options.ActivateOrder, ActivateExhibitor = Options.ActivateExhibitor };
@@ -356,13 +362,16 @@ public sealed class RetryBoundaryTests
         public bool FaultEnabled { get; set; } = true;
         public bool ApplyEffect { get; set; } = true;
         public string? FailReadPath { get; set; }
+        public Action<HttpRequestMessage>? BeforeRequest { get; set; }
         public Func<HttpRequestMessage, HttpResponseMessage?>? SearchOverride { get; set; }
         public Func<AllAccountsModel, AllAccountsModel>? AccountReadOverride { get; set; }
         public ServiceOrdersModel Order { get; private set; } = new()
         {
             OrganizationCode = "10", OrderNumber = 3, Event = 1, Function = 4, Account = "ACCOUNT", BillToAccount = "ACCOUNT", BillToContact = "CONTACT", OrderStatus = "PC"
         };
-        public ExhibitorsModel Exhibitor { get; private set; } = new() { OrganizationCode = "10", ExhibitorID = 2, Event = 1, ExhibitorStatus = 35, ExhibitorCategory = "" };
+        public ExhibitorsModel Exhibitor { get; private set; } = new() { OrganizationCode = "10", ExhibitorID = 2, Event = 1, ExhibitorStatus = 35, ExhibitorType = "ME", Salesperson = "REP", ExhibitorCategory = "" };
+        public readonly List<ServiceOrderItemsModel> Items = [new() { OrderLineNumber = 1, ResourceCode = "TK", Description = "Turnkey Package" }];
+        public readonly List<ActivitiesModel> Activities = [new() { SequenceNumber = 1, Type = "BP", EnteredOn = new DateTime(2026, 10, 4), PlainText = "Accepted booth 101, and had these comments: ok" }];
         public readonly List<DocumentsModel> Copies = [];
         public readonly Dictionary<string, byte[]> DocumentData = [];
         private readonly List<DocumentsModel> savedEmails = [];
@@ -378,6 +387,7 @@ public sealed class RetryBoundaryTests
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            BeforeRequest?.Invoke(request);
             var path = request.RequestUri!.AbsolutePath.Split("/api/v1/")[1];
             Requests.Add($"{request.Method} {path}");
             if (request.Method == HttpMethod.Get)
@@ -414,6 +424,8 @@ public sealed class RetryBoundaryTests
                 if (SearchOverride?.Invoke(request) is { } overridden) return overridden;
                 if (path == "Documents/10") return Search(query.Contains("Type eq 'M'") ? savedEmails : query.Contains("Exhibitor eq") ? Contracts : Copies);
                 if (path == "Notes/10") return Search(Notes);
+                if (path == "ServiceOrderItems/10") return Search(Items);
+                if (path == "Activities/10") return Search(Activities);
                 if (path is "Exhibitors/10" or "ServiceOrders/10") return Search(Array.Empty<ExhibitorsModel>());
                 if (path == "Accounts/10")
                 {

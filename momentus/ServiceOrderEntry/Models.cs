@@ -10,6 +10,7 @@ internal sealed record DocumentInfo(string Type, int SequenceNumber, string Docu
 }
 internal sealed record OrderItemInfo(int LineNumber, string ResourceCode, string Description, string AlternateDescription)
 {
+    public string EvidenceHash { get; init; } = "";
     public string SearchText => string.Join(" | ", new[] { Description, AlternateDescription, ResourceCode }.Where(x => !string.IsNullOrWhiteSpace(x)));
     public string Identifier => !string.IsNullOrWhiteSpace(Description) ? Description.Trim() : (!string.IsNullOrWhiteSpace(AlternateDescription) ? AlternateDescription.Trim() : ResourceCode.Trim());
 }
@@ -46,6 +47,7 @@ internal sealed record AccountInfo(
 
 internal sealed class RunRow
 {
+    public DecisionInputs? DecisionInputs { get; set; }
     public ContractSelection? Contracts { get; set; }
     public List<ContractCopyIdentity> ContractCopies { get; set; } = [];
     public int? ManagedNoteSequence { get; set; }

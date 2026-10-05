@@ -21,6 +21,7 @@ internal sealed class MomentusGateway
     private int requests;
     public int RequestCount => requests;
     internal ProcessingJournal? Journal { get; set; }
+    internal Func<string, object, object>? MutationGuard { get; set; }
     internal BillingConfiguration BillingConfiguration => options.Billing;
 
     // Offline tests supply a client whose HTTP transport cannot reach Momentus.
@@ -79,7 +80,7 @@ internal sealed class MomentusGateway
         var rows = SearchAll(search => client.Endpoints.ServiceOrderItems.Search(options.OrganizationCode, filter, search),
             client.Endpoints.ServiceOrderItems.NavigateSearchList, "ServiceOrderItems", filter,
             x => NumericIdentity(x.OrderLineNumber), nameof(ServiceOrderItemsModel.OrderLineNumber));
-        return rows.Select(x => new OrderItemInfo(Value(x.OrderLineNumber), x.ResourceCode ?? "", x.Description ?? "", x.AltDesc ?? "")).ToList();
+        return rows.Select(x => new OrderItemInfo(Value(x.OrderLineNumber), x.ResourceCode ?? "", x.Description ?? "", x.AltDesc ?? "") { EvidenceHash = OrderIdentity.Hash(JsonConvert.SerializeObject(x)) }).ToList();
     }
 
     public IReadOnlyList<DocumentInfo> GetExhibitorContractPdfs(int exhibitorId)
@@ -127,7 +128,7 @@ internal sealed class MomentusGateway
             Function = functionId,
             Account = account
         };
-        var added = CallWrite("Copy contract document", $"org={options.OrganizationCode}; source={source.Type}/{source.SequenceNumber}; hash={BytesHash(Convert.FromBase64String(data))}; order={orderNumber}", model, () => client.Endpoints.Documents.Add(model),
+        var added = CallWrite("Copy contract document", $"org={options.OrganizationCode}; source={source.Type}/{source.SequenceNumber}; hash={BytesHash(Convert.FromBase64String(data))}; order={orderNumber}", model, write => client.Endpoints.Documents.Add(write),
             new() { ["sourceType"] = source.Type, ["sourceSequence"] = source.SequenceNumber.ToString(CultureInfo.InvariantCulture),
                 ["sourceId"] = source.DocumentId, ["sourceOrg"] = options.OrganizationCode, ["contentHash"] = BytesHash(Convert.FromBase64String(data)),
                 ["baseline"] = string.Join(",", GetOrderContractPdfs(orderNumber).Select(x => $"{x.Type}/{x.SequenceNumber}")) });
@@ -225,7 +226,7 @@ internal sealed class MomentusGateway
                 OrderNumber = orderNumber, Class = "SON", Title = ManagedNoteRules.Title, Text = text
             };
             CallWrite("Add payment schedule note", $"org={options.OrganizationCode}; order={orderNumber}; type=OH; class=SON", model,
-                () => client.Endpoints.Notes.Add(model), new() { ["baseline"] = string.Join(",", notes.Select(x => x.SequenceNumber)), ["noteHash"] = ManagedNoteRules.ContentHash(text) });
+                write => client.Endpoints.Notes.Add(write), new() { ["baseline"] = string.Join(",", notes.Select(x => x.SequenceNumber)), ["noteHash"] = ManagedNoteRules.ContentHash(text) });
         }
         else if (ManagedNoteRules.ContentHash(ManagedNoteRules.Text(existing)) == ManagedNoteRules.ContentHash(text) && existing.Title == ManagedNoteRules.Title)
             action = "ALREADY MATCHED";
@@ -234,7 +235,7 @@ internal sealed class MomentusGateway
             var original = JsonConvert.SerializeObject(existing);
             existing.Class = "SON"; existing.Title = ManagedNoteRules.Title; existing.Text = text;
             CallWrite("Update payment schedule note", $"org={options.OrganizationCode}; order={orderNumber}; note={existing.SequenceNumber}", existing,
-                () => client.Endpoints.Notes.Update(existing), new() { ["original"] = original, ["noteHash"] = ManagedNoteRules.ContentHash(text) });
+                write => client.Endpoints.Notes.Update(write), new() { ["original"] = original, ["noteHash"] = ManagedNoteRules.ContentHash(text) });
             action = "UPDATED";
         }
         var verified = ManagedNoteRules.Resolve(GetOrderSonNotes(orderNumber), journal.Evidence.Stages);
@@ -277,7 +278,7 @@ internal sealed class MomentusGateway
             });
         }
         if (model.Attachments.Count == 0) throw new InvalidOperationException("Ready-for-invoicing email was not sent because no Contract PDFs were available.");
-        CallWrite("Send ready email", $"org={options.OrganizationCode}; order={row.OrderNumber}; recipient={row.ReadyEmailRecipient}; subject={subject}", model, () => client.Endpoints.Emails.Send(model),
+        CallWrite("Send ready email", $"org={options.OrganizationCode}; order={row.OrderNumber}; recipient={row.ReadyEmailRecipient}; subject={subject}", model, write => client.Endpoints.Emails.Send(write),
             new() { ["order"] = row.OrderNumber.ToString(CultureInfo.InvariantCulture), ["baseline"] = string.Join(",", GetSavedEmails(row.OrderNumber).Select(x => x.SequenceNumber)),
                 ["bodyHash"] = OrderIdentity.Hash(model.HtmlText), ["attachmentHashes"] = string.Join(",", model.Attachments.Select(x => BytesHash(Convert.FromBase64String(x.FileData)))) });
         WriteReadyEmailReceipt(row.OrderNumber, row.ReadyEmailRecipient, subject);
@@ -313,7 +314,9 @@ internal sealed class MomentusGateway
         catch (FormatException ex) { throw new InvalidDataException($"Contract PDF {source.SequenceNumber} download was not valid base64 data.", ex); }
     }
 
-    public string GetBoothNumber(int exhibitorId, int eventId)
+    public string GetBoothNumber(int exhibitorId, int eventId) => GetBoothEvidence(exhibitorId, eventId).Booth;
+
+    internal BoothEvidence GetBoothEvidence(int exhibitorId, int eventId)
     {
         var filter = $"(Type eq 'BP' or Type eq 'DC') and ExhibitorID eq {exhibitorId} and Event eq {eventId}";
         var rows = SearchAll(search => client.Endpoints.Activities.Search(options.OrganizationCode, filter, search),
@@ -321,9 +324,10 @@ internal sealed class MomentusGateway
             x => NumericIdentity(x.SequenceNumber), nameof(ActivitiesModel.EnteredOn), nameof(ActivitiesModel.SequenceNumber));
         var matches = rows.Select(x => new { Booth = BoothRules.Parse(x.PlainText), Entered = DateValue(x.EnteredOn), Sequence = Value(x.SequenceNumber) })
             .Where(x => x.Booth.Length > 0).OrderByDescending(x => x.Entered).ThenByDescending(x => x.Sequence).ToList();
-        if (matches.Count == 0) return "";
+        var hash = OrderIdentity.Hash(JsonConvert.SerializeObject(rows.OrderBy(x => x.SequenceNumber)));
+        if (matches.Count == 0) return new("", hash);
         var latest = matches[0];
-        return matches.Where(x => x.Entered == latest.Entered).Select(x => x.Booth).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1 ? latest.Booth : "";
+        return new(matches.Where(x => x.Entered == latest.Entered).Select(x => x.Booth).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1 ? latest.Booth : "", hash);
     }
 
     public IReadOnlyList<AccountInfo> FindContacts(string? parentAccount, string email)
@@ -367,7 +371,7 @@ internal sealed class MomentusGateway
             PostalCode = request.PostalCode,
             Country = TextRules.MomentusCountry(request.Country)
         };
-        var added = CallWrite("Create organization account", $"org={options.OrganizationCode}; order={Journal?.Evidence.Identity.Order}", model, () => client.Endpoints.Accounts.Add(model));
+        var added = CallWrite("Create organization account", $"org={options.OrganizationCode}; order={Journal?.Evidence.Identity.Order}", model, write => client.Endpoints.Accounts.Add(write));
         if (string.IsNullOrWhiteSpace(added.AccountCode)) throw new UnknownWriteOutcomeException("Create organization account", $"org={options.OrganizationCode}; company={request.CompanyName}", new InvalidDataException("Momentus did not return the created AccountCode."));
         return added.AccountCode.Trim();
     }
@@ -402,7 +406,7 @@ internal sealed class MomentusGateway
             // Bill-To links do not grant Event Sales participation to billing-only accounts.
             EventSalesDesignation = relationshipType == "BTO" ? null : "P"
         };
-        CallWrite("Add relationship", $"org={options.OrganizationCode}; master={masterAccount}; subordinate={subordinateAccount}; type={relationshipType}", relationship, () => client.Endpoints.Relationships.Add(relationship));
+        CallWrite("Add relationship", $"org={options.OrganizationCode}; master={masterAccount}; subordinate={subordinateAccount}; type={relationshipType}", relationship, write => client.Endpoints.Relationships.Add(write));
         CallRead(() => client.Endpoints.Relationships.Get(options.OrganizationCode, masterAccount, subordinateAccount, relationshipType));
     }
 
@@ -420,7 +424,7 @@ internal sealed class MomentusGateway
             LastName = request.LastName,
             Email = TextRules.NormalizeEmail(request.Email)
         };
-        var added = CallWrite("Create contact", $"org={options.OrganizationCode}; parent={parentAccount}; order={Journal?.Evidence.Identity.Order}", model, () => client.Endpoints.Accounts.Add(model));
+        var added = CallWrite("Create contact", $"org={options.OrganizationCode}; parent={parentAccount}; order={Journal?.Evidence.Identity.Order}", model, write => client.Endpoints.Accounts.Add(write));
         if (string.IsNullOrWhiteSpace(added.AccountCode)) throw new UnknownWriteOutcomeException("Create contact", $"org={options.OrganizationCode}; parent={parentAccount}; email={request.Email}", new InvalidDataException("Momentus did not return the created contact AccountCode."));
         return added.AccountCode.Trim();
     }
@@ -429,13 +433,13 @@ internal sealed class MomentusGateway
     {
         var operation = TextRules.Same(order.OrderStatus, "A") ? "Activate order" : "Update service order";
         var original = SerializeIntent(operation, GetOrder(Value(order.OrderNumber)));
-        return CallWrite(operation, $"org={options.OrganizationCode}; order={order.OrderNumber}", order, () => client.Endpoints.ServiceOrders.Update(order), new() { ["original"] = original });
+        return CallWrite(operation, $"org={options.OrganizationCode}; order={order.OrderNumber}", order, write => client.Endpoints.ServiceOrders.Update(write), new() { ["original"] = original });
     }
     public ExhibitorsModel UpdateExhibitor(ExhibitorsModel exhibitor)
     {
         var operation = Value(exhibitor.ExhibitorStatus) == 2 ? "Activate exhibitor" : "Update exhibitor categories";
         var original = SerializeIntent(operation, GetExhibitor(Value(exhibitor.ExhibitorID)));
-        return CallWrite(operation, $"org={options.OrganizationCode}; exhibitor={exhibitor.ExhibitorID}", exhibitor, () => client.Endpoints.Exhibitors.Update(exhibitor), new() { ["original"] = original });
+        return CallWrite(operation, $"org={options.OrganizationCode}; exhibitor={exhibitor.ExhibitorID}", exhibitor, write => client.Endpoints.Exhibitors.Update(write), new() { ["original"] = original });
     }
 
     public static BillingRequest BillingFrom(AllAccountsModel model, BillingConfiguration configuration) => BillingState.Read(model, configuration);
@@ -510,7 +514,7 @@ internal sealed class MomentusGateway
         throw new InvalidOperationException("Unreachable read retry state.");
     }
 
-    private T CallWrite<T>(string operation, string target, T intent, Func<T> action, Dictionary<string, string>? source = null)
+    private T CallWrite<T>(string operation, string target, T intent, Func<T, T> action, Dictionary<string, string>? source = null)
     {
         var journal = Journal ?? throw new InvalidOperationException("External mutations require a durable per-order journal.");
         if (operation is "Create organization account" or "Create contact" ||
@@ -524,6 +528,7 @@ internal sealed class MomentusGateway
         if (journal.Evidence.Stages.Any(x => x.Status is StageStatus.Dispatching or StageStatus.Unknown or StageStatus.Succeeded))
             throw new RecoveryReviewException("REVIEW: a prior dispatched stage is unresolved; no new mutation can be dispatched before reconciliation and durable verification.");
         // Persist only intended mutable values; full SDK responses can change on readback.
+        if (MutationGuard is not null) intent = (T)MutationGuard(operation, intent!);
         var stage = journal.Prepare(operation, target, SerializeIntent(operation, intent), source);
         if (stage.Status == StageStatus.Verified) return JsonConvert.DeserializeObject<T>(stage.Result)!;
         journal.Dispatching(stage); // Must reach durable storage before dispatch.
@@ -533,7 +538,7 @@ internal sealed class MomentusGateway
         try
         {
             // No retry: losing a response never proves that the mutation failed.
-            result = action();
+            result = action(intent);
             ThrowSdkError();
             if (result is null) throw new InvalidDataException("Momentus returned no mutation response.");
         }
