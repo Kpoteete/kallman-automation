@@ -12,11 +12,25 @@ The runner uses a bounded `--max-results 1000000` ceiling. The former 100000 cei
 
 ## Package and installation
 
-Build from the source folder:
+For a fresh checkout, review `billing-config.example.json` against the executing tenant. It contains the documented Kallman billing metadata and no credentials. Create the local configuration once; `billing-config.json` stays ignored by Git:
+
+```powershell
+Copy-Item -LiteralPath .\billing-config.example.json -Destination .\billing-config.json
+```
+
+Then build from the source folder:
 
 ```powershell
 & 'C:\kwi-automations\momentus\ServiceOrderEntry\Build-Release.ps1'
 ```
+
+Alternatively, supply the reviewed configuration directly without creating a source-folder copy:
+
+```powershell
+.\Build-Release.ps1 -BillingConfigurationPath 'C:\Kallman\config\service-order-entry-billing.json'
+```
+
+The build rejects missing, malformed or unexpected configuration fields before creating a package, then copies and hash-checks that explicit input in the immutable release. The executable performs its full billing-policy validation before processing. Never put credentials in the configuration; use the three environment variables below.
 
 The build tests the project and creates a new immutable, self-contained win-x64 package. It never replaces an earlier release. Copy the entire package to a permanent local disk folder on the computer that will execute the task. No .NET runtime installation is needed for this package. All three scripts, both lookup workbooks and `billing-config.json` must remain beside the executable.
 

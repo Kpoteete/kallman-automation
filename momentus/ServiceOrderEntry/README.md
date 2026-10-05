@@ -50,6 +50,8 @@ Live runs use one canonical machine-local folder: `%ProgramData%\Kallman\Service
 
 Startup adds incomplete journaled orders across all events to discovery by exact order/exhibitor IDs independently of PC/35 eligibility. Existing endpoint, organization, explicit exhibitor/event scope, confirmation, and attempt-cap restrictions still apply. Recovery reuses the saved plan and verified IDs; changing its email/activation options requires REVIEW. Recorded activations permit recovery to recognize order A/exhibitor 2 without losing the unfinished work. Current identity, Hold, and status checks remain required. Completed records are reused instead of executing the pipeline again.
 
+If an exact recovery order/exhibitor read fails (including a missing Momentus record), discovery retains the journal unchanged and adds a `RECOVERY REVIEW` row to the CSV, then continues discovering other records. Unresolved dispatched stages retain an `UNKNOWN` outcome; other unavailable recovery targets return REVIEW. The run returns nonzero, no writes are attempted for the unavailable record, and that unresolved journal still blocks shared exhibitor activation. Do not delete recovery history to bypass a missing-record error.
+
 An interrupted `Dispatching` stage becomes `Unknown`. Recovery reads current external state and either persists positive reconciliation as `Verified` or stops with `RECOVERY REVIEW` and a nonzero result. It never automatically redispatches unknown writes, even when an absence search or unchanged old values might suggest non-execution. Created accounts/contacts require their returned ID and matching readback; name/email searches without a returned ID are insufficient proof. Relationships use their exact organization/account/type composite key. Updates use exact target IDs and intended fields. Document recovery uses the returned type/sequence when present, or a unique new destination outside the recorded baseline, plus the source content hash. Notes use returned/existing sequence, intended title/text, and unique matching readback. Email reconciliation requires an accepted response plus a new saved-email record; otherwise it requires review. Planned stages and confirmed rejections may proceed through existing validation; skipped journaled stages must have positive readback evidence before completion.
 
 The journal is evidence and recovery state, not a transaction or rollback mechanism. Never clear an unknown stage to make it eligible for retry. Existing legacy CSVs, receipts, and package-local state are preserved; they do not supply missing per-stage evidence for pre-journal mutations. The journal and supplemental receipts use endpoint/organization-aware identity. Keep the canonical state across restarts and future releases.
@@ -100,7 +102,7 @@ The customer's selector is authoritative. The revised Step 4 requirements supers
 
 ### Required billing configuration
 
-Supply `--billing-config PATH`, or place `billing-config.json` beside the executable. No tenant Class/Type or Not Applicable status value is guessed. Header/Class/Type must be configured before any processing; Class is one character and Type at most two. SDK documentation defines `OrgAccountUDF` as the organization-account header. The saved `Accounts_Pull.xlsx` extract dated 2026-10-04 establishes the Kallman organization-account billing set as Header `OrgAccountUDF`, Class `C`, Type `AU`: its billing-selector column contains `BA`, `ECA`, `Y` and `N`, alongside the billing fields confirmed by `AllCustomFields (2).xlsx`. The user-supplied Account Status screenshot on 2026-10-05 confirms Not Applicable status class `0`, status code `0`, and weight `0`.
+Supply `--billing-config PATH`, or place `billing-config.json` beside the executable. For a fresh checkout, review the tracked `billing-config.example.json` and copy it to the ignored local `billing-config.json`, or pass a reviewed file to `Build-Release.ps1 -BillingConfigurationPath PATH`. See [SCHEDULING.md](SCHEDULING.md) for the exact preparation/build commands. No tenant Class/Type or Not Applicable status value is guessed. Header/Class/Type must be configured before any processing; Class is one character and Type at most two. SDK documentation defines `OrgAccountUDF` as the organization-account header. The saved `Accounts_Pull.xlsx` extract dated 2026-10-04 establishes the Kallman organization-account billing set as Header `OrgAccountUDF`, Class `C`, Type `AU`: its billing-selector column contains `BA`, `ECA`, `Y` and `N`, alongside the billing fields confirmed by `AllCustomFields (2).xlsx`. The user-supplied Account Status screenshot on 2026-10-05 confirms Not Applicable status class `0`, status code `0`, and weight `0`.
 
 Confirmed Kallman configuration (missing Class/Type fail closed; empty status blocks new account creation):
 
@@ -141,10 +143,10 @@ dotnet publish .\ServiceOrderEntry.csproj -c Release -r win-x64 --self-contained
 
 ## Deployment
 
-The verified 2026-10-05 all-events package is available for manual runs at `C:\kwi-automations\artifacts\publish\ServiceOrderEntry\2026-10-05-all-events`. Commands for this package:
+The 2026-10-05 recovery-discovery fix package is available for manual runs at `C:\kwi-automations\artifacts\publish\ServiceOrderEntry\2026-10-05-recovery-discovery-fix`. The earlier all-events package is preserved. Commands for the new package:
 
 ```powershell
-$folder = 'C:\kwi-automations\artifacts\publish\ServiceOrderEntry\2026-10-05-all-events'
+$folder = 'C:\kwi-automations\artifacts\publish\ServiceOrderEntry\2026-10-05-recovery-discovery-fix'
 & "$folder\ServiceOrderEntry.exe" preview
 & "$folder\ServiceOrderEntry.exe" apply --confirm-service-order-entry --all --max-updates 10
 ```

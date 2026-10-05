@@ -1,0 +1,8 @@
+{
+  "Header": "OrgAccountUDF",
+  "Class": "C",
+  "Type": "AU",
+  "EventSalesNotApplicableCode": "0",
+  "AboveSelectors": ["", "ECA", "No", "N", "Use Above Address"],
+  "SeparateSelectors": ["BA", "Yes", "Y", "Below Address"]
+}
