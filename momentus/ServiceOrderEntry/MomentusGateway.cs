@@ -22,6 +22,7 @@ internal sealed class MomentusGateway
     public int RequestCount => requests;
     internal ProcessingJournal? Journal { get; set; }
     internal Func<string, object, object>? MutationGuard { get; set; }
+    internal Action? BeforeWriteDispatch { get; set; }
     internal BillingConfiguration BillingConfiguration => options.Billing;
 
     // Offline tests supply a client whose HTTP transport cannot reach Momentus.
@@ -44,14 +45,13 @@ internal sealed class MomentusGateway
         client = new ApiClient(new Jwt { UngerboeckURI = options.BaseUrl, APIUserID = user, Secret = secret, Key = key, AutoRefresh = new AutoRefresh() });
     }
 
-    public IReadOnlyList<Candidate> FindCandidates(IReadOnlySet<int> enabledEvents)
+    public IReadOnlyList<Candidate> FindCandidates()
     {
         var exhibitorFilter = $"ExhibitorStatus eq 35 and ExhibitorType eq 'ME'";
         if (options.ExhibitorId.HasValue) exhibitorFilter += $" and ExhibitorID eq {options.ExhibitorId.Value}";
         if (options.EventId.HasValue) exhibitorFilter += $" and Event eq {options.EventId.Value}";
         var exhibitors = SearchExhibitors(exhibitorFilter)
             .Where(x => Value(x.ExhibitorID) > 0 && Value(x.Event) > 0)
-            .Where(x => EventScopeRules.IsAllowed(Value(x.Event), enabledEvents, options.ExhibitorId.HasValue))
             .Where(x => !ExhibitorCategoryRules.HasCode(x.ExhibitorCategory, ExhibitorCategoryRules.Hold))
             .ToList();
         var result = new List<Candidate>();
@@ -302,17 +302,18 @@ internal sealed class MomentusGateway
         var subject = ReadyEmailBuilder.Subject(emailRow);
         var model = new EmailsModel { Organization = options.OrganizationCode, EmailSubject = subject,
             HtmlText = ReadyEmailBuilder.Build(emailRow, handoff.Attachments), SaveAsUngerboeckDocument = new DocumentsModel { Order = handoff.OrderNumber } };
-        if (!BillingRules.ValidEmail(row.ReadyEmailRecipient)) throw new RecoveryReviewException("REVIEW: invalid handoff recipient.");
-        model.SendToAddresses.Add(new EmailAccountModel { EmailAddress = row.ReadyEmailRecipient });
+        var recipients = ReadyEmailBuilder.Recipients(row);
+        foreach (var recipient in recipients.To) model.SendToAddresses.Add(new EmailAccountModel { EmailAddress = recipient });
+        foreach (var recipient in recipients.Cc) model.CCAddresses.Add(new EmailAccountModel { EmailAddress = recipient });
         foreach (var document in handoff.Attachments)
         {
             model.Attachments.Add(new AttachmentModel { Description = SafeAttachmentName(document.Description, document.SequenceNumber),
                 FileName = SafeAttachmentName(document.DocumentId, document.SequenceNumber) + ".pdf", FileData = Convert.ToBase64String(VerifiedDocumentData(document)) });
         }
-        CallWrite("Send ready email", $"org={options.OrganizationCode}; order={row.OrderNumber}; recipient={row.ReadyEmailRecipient}; subject={subject}", model, write => client.Endpoints.Emails.Send(write),
+        CallWrite("Send ready email", $"org={options.OrganizationCode}; order={row.OrderNumber}; recipient={row.ReadyEmailRecipient}; cc={row.ReadyEmailCcRecipient}; subject={subject}", model, write => client.Endpoints.Emails.Send(write),
             new() { ["order"] = row.OrderNumber.ToString(CultureInfo.InvariantCulture), ["baseline"] = string.Join(",", GetSavedEmails(row.OrderNumber).Select(x => x.SequenceNumber)),
                 ["bodyHash"] = OrderIdentity.Hash(model.HtmlText), ["attachmentHashes"] = string.Join(",", model.Attachments.Select(x => BytesHash(Convert.FromBase64String(x.FileData)))) });
-        WriteReadyEmailReceipt(row.OrderNumber, row.ReadyEmailRecipient, subject);
+        WriteReadyEmailReceipt(row.OrderNumber, row.ReadyEmailRecipient, row.ReadyEmailCcRecipient, subject);
         return "SENT";
     }
 
@@ -324,14 +325,14 @@ internal sealed class MomentusGateway
     }
 
     private string ReadyEmailReceiptPath(int orderNumber) => Path.Combine(options.StateFolder, $"ready-email-{OrderIdentity.Hash(new Uri(options.BaseUrl).AbsoluteUri.TrimEnd('/') + "|" + options.OrganizationCode)}-order-{orderNumber}.sent.json");
-    private void WriteReadyEmailReceipt(int orderNumber, string recipient, string subject)
+    private void WriteReadyEmailReceipt(int orderNumber, string recipient, string ccRecipient, string subject)
     {
         try
         {
             Directory.CreateDirectory(options.StateFolder);
             var path = ReadyEmailReceiptPath(orderNumber);
             var temp = path + $".{Guid.NewGuid():N}.tmp";
-            FileJournalStore.DurableWrite(temp, System.Text.Json.JsonSerializer.Serialize(new { SentOn = DateTimeOffset.Now, OrderNumber = orderNumber, Recipient = recipient, Subject = subject }));
+            FileJournalStore.DurableWrite(temp, System.Text.Json.JsonSerializer.Serialize(new { SentOn = DateTimeOffset.Now, OrderNumber = orderNumber, Recipient = recipient, CcRecipient = ccRecipient, Subject = subject }));
             File.Move(temp, path, true);
         }
         catch (Exception ex) { throw new JournalStorageException("Email was accepted and journaled, but receipt persistence failed; stop subsequent mutations.", ex); }
@@ -567,6 +568,7 @@ internal sealed class MomentusGateway
         if (MutationGuard is not null) intent = (T)MutationGuard(operation, intent!);
         var stage = journal.Prepare(operation, target, SerializeIntent(operation, intent), source);
         if (stage.Status == StageStatus.Verified) return JsonConvert.DeserializeObject<T>(stage.Result)!;
+        BeforeWriteDispatch?.Invoke(); // Reserve this order's allowance only when a write will be dispatched.
         journal.Dispatching(stage); // Must reach durable storage before dispatch.
         T result;
         requests++;
@@ -629,7 +631,15 @@ internal sealed class MomentusGateway
                 AttachmentManifest = e.Attachments.Select(a => new { a.FileName, a.Description, Hash = BytesHash(Convert.FromBase64String(a.FileData)) }).ToArray() },
             _ => throw new InvalidOperationException($"No durable intent defined for {operation}.")
         };
-        return JsonConvert.SerializeObject(fields);
+        var serialized = Newtonsoft.Json.Linq.JObject.FromObject(fields);
+        // Retain the exact legacy intent shape when no copies were requested. Copies are part of
+        // dispatch identity and accepted-response verification whenever they are present.
+        if (value is EmailsModel email)
+        {
+            if (email.CCAddresses.Count > 0) serialized["CCAddresses"] = Newtonsoft.Json.Linq.JArray.FromObject(email.CCAddresses);
+            if (email.BCCAddresses.Count > 0) serialized["BCCAddresses"] = Newtonsoft.Json.Linq.JArray.FromObject(email.BCCAddresses);
+        }
+        return serialized.ToString(Newtonsoft.Json.Formatting.None);
     }
 
     internal void ReconcileIncomplete()
@@ -787,7 +797,8 @@ internal sealed class MomentusGateway
                 var accepted = JsonConvert.DeserializeObject<EmailsModel>(stage.Result);
                 if (accepted is null || matches.Count != 1 || (Newtonsoft.Json.Linq.JObject.Parse(stage.Intent)["AttachmentManifest"] is not null
                         ? SerializeIntent("Send ready email", accepted) != stage.Intent
-                        : JsonConvert.SerializeObject(new { accepted.Organization, accepted.EmailSubject, accepted.HtmlText, accepted.SendToAddresses, accepted.SaveAsUngerboeckDocument }) != stage.Intent) ||
+                        : accepted.CCAddresses.Count > 0 || accepted.BCCAddresses.Count > 0 ||
+                          JsonConvert.SerializeObject(new { accepted.Organization, accepted.EmailSubject, accepted.HtmlText, accepted.SendToAddresses, accepted.SaveAsUngerboeckDocument }) != stage.Intent) ||
                     matches[0].Order != int.Parse(stage.Source["order"], CultureInfo.InvariantCulture) ||
                     OrderIdentity.Hash(accepted.HtmlText ?? "") != stage.Source["bodyHash"] ||
                     string.Join(",", accepted.Attachments.Select(a => BytesHash(Convert.FromBase64String(a.FileData)))) != stage.Source["attachmentHashes"]) return false;

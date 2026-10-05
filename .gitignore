@@ -45,6 +45,8 @@ diagnose_*.py
 appsettings.local.json
 projects/Schedule of events/8961AB00
 *.xlsx
+!momentus/ServiceOrderEntry/SalesRepLookup.xlsx
+!momentus/ServiceOrderEntry/OrderCategoryLookup.xlsx
 *.csv
 *.log
 ~$*

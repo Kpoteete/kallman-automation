@@ -395,8 +395,50 @@ public sealed class SearchCompletenessTests
             return SearchResponse(endpoint == "Exhibitors" ? new object[] { s.Transport.Exhibitor } : new object[] { s.Transport.Order },
                 later ? 2 : 1, 2, later ? null : $"https://offline.invalid/prod/api/v1/{endpoint}/10?page=2");
         };
-        Assert.Single(s.Gateway.FindCandidates(new HashSet<int> { 1 }));
+        Assert.Single(s.Gateway.FindCandidates());
         Assert.Equal(4, s.Gateway.RequestCount);
+    }
+
+    [Fact]
+    public void BulkDiscoveryIncludesAllEventsInEventThenOrderSequenceAndExcludesHold()
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        var exhibitors = new[]
+        {
+            new ExhibitorsModel { OrganizationCode = "10", ExhibitorID = 2, Event = 6246, ExhibitorStatus = 35, ExhibitorType = "ME" },
+            new ExhibitorsModel { OrganizationCode = "10", ExhibitorID = 4, Event = 6193, ExhibitorStatus = 35, ExhibitorType = "ME" },
+            new ExhibitorsModel { OrganizationCode = "10", ExhibitorID = 5, Event = 99999, ExhibitorStatus = 35, ExhibitorType = "ME" },
+            new ExhibitorsModel { OrganizationCode = "10", ExhibitorID = 6, Event = 6246, ExhibitorStatus = 35, ExhibitorType = "ME", ExhibitorCategory = "103" }
+        };
+        var orderSearches = new List<string>();
+        s.Transport.SearchOverride = request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/Exhibitors/10"))
+            {
+                var query = Uri.UnescapeDataString(request.RequestUri.Query);
+                Assert.Contains("ExhibitorStatus eq 35", query);
+                Assert.Contains("ExhibitorType eq 'ME'", query);
+                Assert.DoesNotContain("Event eq", query);
+                return SearchResponse(exhibitors, 1, exhibitors.Length, null, exhibitors.Length);
+            }
+            if (!request.RequestUri.AbsolutePath.EndsWith("/ServiceOrders/10")) return null;
+            var filter = Uri.UnescapeDataString(request.RequestUri.Query);
+            orderSearches.Add(filter);
+            Assert.Contains("OrderStatus eq 'PC'", filter);
+            var exhibitor = exhibitors.Single(x => filter.Contains($"Exhibitor eq {x.ExhibitorID} and"));
+            var orders = new[]
+            {
+                new ServiceOrdersModel { OrganizationCode = "10", Event = exhibitor.Event, Exhibitor = exhibitor.ExhibitorID, OrderNumber = exhibitor.ExhibitorID * 10 + 1, OrderStatus = "PC" },
+                new ServiceOrdersModel { OrganizationCode = "10", Event = exhibitor.Event, Exhibitor = exhibitor.ExhibitorID, OrderNumber = exhibitor.ExhibitorID * 10, OrderStatus = "PC" }
+            };
+            return SearchResponse(orders, 1, orders.Length, null, orders.Length);
+        };
+        var candidates = s.Gateway.FindCandidates();
+        Assert.Equal(new int?[] { 6193, 6193, 6246, 6246, 99999, 99999 }, candidates.Select(x => x.Order.Event));
+        Assert.Equal(new int?[] { 40, 41, 20, 21, 50, 51 }, candidates.Select(x => x.Order.OrderNumber));
+        Assert.Equal(3, orderSearches.Count);
+        Assert.DoesNotContain(orderSearches, x => x.Contains("Exhibitor eq 6 and"));
+        Assert.Empty(s.Transport.Mutations);
     }
 
     [Fact]

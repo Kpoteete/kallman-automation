@@ -26,7 +26,7 @@ internal static class HandoffRules
         var documents = contracts.OrderDocuments.Concat(contracts.Sources).GroupBy(x => x.ContentHash).Select(x => x.First().Document).ToList();
         if (documents.Count == 0) throw new RecoveryReviewException("REVIEW: no applicable contract attachment exists.");
         foreach (var document in documents) _ = gateway.VerifiedDocumentData(document);
-        if ((gateway.Journal?.Evidence.SendEmail ?? true) && !BillingRules.ValidEmail(row.ReadyEmailRecipient)) throw new RecoveryReviewException("REVIEW: handoff recipient is invalid.");
+        if (gateway.Journal?.Evidence.SendEmail ?? true) _ = ReadyEmailBuilder.Recipients(row);
         return documents;
     }
 

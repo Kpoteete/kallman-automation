@@ -43,11 +43,13 @@ public sealed class HandoffActivationTests
         s.Apply(); Assert.True(s.Row.ServiceOrderUpdateStatus == "COMPLETED", s.Row.UpdateMessage);
         Assert.DoesNotContain("Copy contract document", s.Transport.Mutations); Assert.Single(Assert.Single(s.Transport.Emails).Attachments);
     }
-    [Theory] [InlineData("missing hash")] [InlineData("malformed pdf")] [InlineData("changed bytes")] [InlineData("empty recipient")]
+    [Theory] [InlineData("missing hash")] [InlineData("malformed pdf")] [InlineData("changed bytes")] [InlineData("empty recipient")] [InlineData("invalid CC")] [InlineData("invalid second To")]
     public void DetectableAttachmentOrRecipientProblemBlocksFirstWrite(string error)
     {
         using var s = new RetryBoundaryTests.Scenario();
         if (error == "empty recipient") s.Row.ReadyEmailRecipient = "";
+        else if (error == "invalid CC") s.Row.ReadyEmailCcRecipient = "kylep@@kallman.com";
+        else if (error == "invalid second To") s.Row.ReadyEmailRecipient = "finance@example.invalid; broken@@example.invalid";
         else if (error == "missing hash") { var source = s.Row.Contracts!.Sources[0]; s.Row.Contracts = s.Row.Contracts with { Sources = [source with { Document = source.Document with { ContentHash = "" } }] }; }
         else s.Transport.DocumentData["C/11"] = error == "malformed pdf" ? Encoding.UTF8.GetBytes("not a PDF") : RetryBoundaryTests.MakePdf(RetryBoundaryTests.TestSchedule + "\nRevision");
         s.Apply(); Assert.Empty(s.Transport.Mutations); Assert.NotEqual(0, Runner.ApplyExitCode([s.Row]));
@@ -75,7 +77,7 @@ public sealed class HandoffActivationTests
         using var s = new RetryBoundaryTests.Scenario(); s.Transport.OtherOrders.Add(Other()); s.Apply();
         Assert.Equal(2, Runner.ApplyExitCode([s.Row])); Assert.Equal(35, s.Transport.Exhibitor.ExhibitorStatus); Assert.Equal("A", s.Transport.Order.OrderStatus);
         var evidence = s.Store.Load().Single(); Assert.True(evidence.OrderComplete); Assert.True(evidence.Complete); Assert.True(evidence.ExhibitorActivationPending);
-        Assert.Single(Runner.RecoveryWork([evidence], s.Options, new HashSet<int> { 1 })); Assert.DoesNotContain("Activate exhibitor", s.Transport.Mutations);
+        Assert.Single(Runner.RecoveryWork([evidence], s.Options)); Assert.DoesNotContain("Activate exhibitor", s.Transport.Mutations);
     }
     [Theory] [InlineData("UNKNOWN")] [InlineData("FAILED")] [InlineData("REVIEW")] [InlineData("PENDING")]
     public void UnfinishedPeerJournalBlocksExhibitorEvenWhenItsOrderIsActive(string outcome)
@@ -143,10 +145,11 @@ public sealed class HandoffActivationTests
         var file = Path.Combine(s.Options.RunFolder, "not-a-folder"); File.WriteAllText(file, "preserve");
         Assert.ThrowsAny<IOException>(() => Run(s, s.Options with { RunFolder = file })); Assert.Empty(s.Transport.Requests); Assert.Empty(s.Transport.Mutations);
     }
-    [Theory] [InlineData("body")] [InlineData("attachments")] [InlineData("recipient")]
+    [Theory] [InlineData("body")] [InlineData("attachments")] [InlineData("recipient")] [InlineData("cc")]
     public void AcceptedEmailResponseMustCorroborateExactIntent(string field)
     {
         using var s = new RetryBoundaryTests.Scenario();
+        s.Row.ReadyEmailCcRecipient = "copy@example.invalid";
         s.Transport.ResponseOverride = result =>
         {
             if (result is not EmailsModel email) return result;
@@ -154,10 +157,31 @@ public sealed class HandoffActivationTests
             if (field == "body") changed.HtmlText = "different body";
             if (field == "attachments") changed.Attachments.Clear();
             if (field == "recipient") changed.SendToAddresses[0].EmailAddress = "other@example.invalid";
+            if (field == "cc") changed.CCAddresses[0].EmailAddress = "other@example.invalid";
             return changed;
         };
         s.Apply(); Assert.Equal("UNKNOWN", s.Row.Outcome); Assert.DoesNotContain("Activate order", s.Transport.Mutations);
         s.Apply(restart: true); Assert.Single(s.Transport.Emails);
+    }
+
+    [Fact] public void FinanceEmailUsesTwoToRecipientsCcAndLeadingDevelopmentNotice()
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        s.Row.ReadyEmailRecipient = ReadyEmailBuilder.FinanceRecipients;
+        s.Row.ReadyEmailCcRecipient = ReadyEmailBuilder.FinanceCcRecipient;
+        s.Apply();
+        Assert.Equal("SUCCESS", s.Row.Outcome);
+        var email = Assert.Single(s.Transport.Emails);
+        Assert.Equal(new[] { "MiranaC@kallman.com", "LindsayH@kallman.com" }, email.SendToAddresses.Select(x => x.EmailAddress));
+        Assert.Equal("kylep@kallman.com", Assert.Single(email.CCAddresses).EmailAddress);
+        Assert.Empty(email.BCCAddresses);
+        Assert.True(email.HtmlText.IndexOf(ReadyEmailBuilder.DevelopmentNotice, StringComparison.Ordinal) < email.HtmlText.IndexOf("Hi Mirana", StringComparison.Ordinal));
+        var intent = Newtonsoft.Json.Linq.JObject.Parse(s.Store.Load().Single().Stages.Single(x => x.Operation == "Send ready email").Intent);
+        Assert.Equal("kylep@kallman.com", (string?)intent["CCAddresses"]![0]!["EmailAddress"]);
+        Assert.Equal("A", s.Transport.Order.OrderStatus);
+        Assert.Equal(2, s.Transport.Exhibitor.ExhibitorStatus);
+        s.Apply(restart: true);
+        Assert.Single(s.Transport.Emails);
     }
     [Fact] public void WrongOrganizationReturnedForOrderCannotAuthorizeMutation()
     {

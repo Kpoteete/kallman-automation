@@ -21,15 +21,18 @@ internal static class Program
 internal sealed record CliOptions(
     bool Apply, bool Confirm, bool Help, bool ActivateOrder, bool ActivateExhibitor, bool SendReadyEmail, bool All, bool MaxUpdatesSpecified,
     string OrganizationCode, string BaseUrl, string StateFolder, string RunFolder,
-    string SalesRepLookupPath, string CategoryLookupPath, string EnabledEventsPath, int PageSize, int MaxResults, int MaxUpdates, int RequestDelayMs,
+    string SalesRepLookupPath, string CategoryLookupPath, int PageSize, int MaxResults, int MaxUpdates, int RequestDelayMs,
     int? ExhibitorId, int? EventId)
 {
+    public bool Probe { get; init; }
     public BillingConfiguration Billing { get; init; } = new();
     public string BillingConfigurationPath { get; init; } = Path.Combine(AppContext.BaseDirectory, "billing-config.json");
     public const string HelpText = """
 ServiceOrderEntry
 
 Usage:
+  ServiceOrderEntry.exe probe
+  ServiceOrderEntry.exe preview
   ServiceOrderEntry.exe preview --exhibitor ID [--event ID]
   ServiceOrderEntry.exe apply --confirm-service-order-entry --exhibitor ID [options]
   ServiceOrderEntry.exe apply --confirm-service-order-entry --all [--max-updates 1-10]
@@ -37,13 +40,16 @@ Usage:
 Preview is the default and never writes to Momentus. Initial live testing must be
 scoped to exactly one exhibitor. Eligible records require exhibitor status 35
 (Online Booth Order), main-exhibitor type ME, and service-order status PC.
+Bulk runs search all events in the selected organization.
 
 Options:
   --exhibitor ID                 Scope the run to one exhibitor (required for apply).
   --all                          Apply to all eligible records, capped at 10 attempts.
   --event ID                     Optionally scope that exhibitor to one event.
-  --activate-order               After a successful field update, change order PC to A.
-  --activate-exhibitor           After a successful field update, change exhibitor 35 to 2.
+  --activate-order               Enabled by default in apply: change verified order PC to A.
+  --activate-exhibitor           Enabled by default in apply: change completed exhibitor 35 to 2.
+  --skip-order-activation        Keep order PC (exceptional run / matching old recovery options).
+  --skip-exhibitor-activation    Keep exhibitor 35 (exceptional run / matching old recovery options).
   --skip-ready-email             Do not send the normally enabled ready-for-invoicing email.
   --confirm-service-order-entry  Required with apply mode.
   --max-updates N                Maximum orders updated in one apply run (default: 1).
@@ -52,7 +58,6 @@ Options:
   --sales-rep-lookup PATH        Default: ./SalesRepLookup.xlsx.
   --category-lookup PATH         Default: ./OrderCategoryLookup.xlsx.
   --billing-config PATH          Explicit billing UDF identity and tenant Not Applicable status (default: ./billing-config.json).
-  --enabled-events PATH         Only these Event IDs may be processed (default: ./enabled-events.txt).
   --org CODE                     Momentus organization (default: 10).
   --base-url URL                 Default: https://kallman.ungerboeck.com/prod.
   --page-size N                  API page size (default: 1000).
@@ -68,11 +73,11 @@ Credentials are read only from MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_K
         var root = AppContext.BaseDirectory;
         var o = new CliOptions(false, false, false, false, false, true, false, false, "10", "https://kallman.ungerboeck.com/prod",
             CanonicalState.Folder, Path.Combine(root, "runs"), Path.Combine(root, "SalesRepLookup.xlsx"), Path.Combine(root, "OrderCategoryLookup.xlsx"),
-            Path.Combine(root, "enabled-events.txt"), 1000, 100000, 1, 100, null, null);
+            1000, 100000, 1, 100, null, null);
         var i = 0;
         if (args.Length > 0 && !args[0].StartsWith("--", StringComparison.Ordinal))
         {
-            o = args[0].ToLowerInvariant() switch { "preview" => o, "apply" => o with { Apply = true }, _ => throw new CliException($"Unknown mode '{args[0]}'.") };
+            o = args[0].ToLowerInvariant() switch { "probe" => o with { Probe = true }, "preview" => o, "apply" => o with { Apply = true, ActivateOrder = true, ActivateExhibitor = true }, _ => throw new CliException($"Unknown mode '{args[0]}'.") };
             i++;
         }
         string Next() { if (++i >= args.Length) throw new CliException($"Missing value after {args[i - 1]}."); return args[i]; }
@@ -80,12 +85,14 @@ Credentials are read only from MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_K
         {
             "--confirm-service-order-entry" => o with { Confirm = true }, "--activate-order" => o with { ActivateOrder = true },
             "--activate-exhibitor" => o with { ActivateExhibitor = true }, "--help" or "-h" or "/?" => o with { Help = true },
+            "--skip-order-activation" => o with { ActivateOrder = false },
+            "--skip-exhibitor-activation" => o with { ActivateExhibitor = false },
             "--skip-ready-email" => o with { SendReadyEmail = false },
             "--all" => o with { All = true },
             "--org" => o with { OrganizationCode = Next().Trim() }, "--base-url" => o with { BaseUrl = Next().Trim().TrimEnd('/') },
             "--state-folder" => o with { StateFolder = Path.GetFullPath(Next()) }, "--run-folder" => o with { RunFolder = Path.GetFullPath(Next()) },
             "--sales-rep-lookup" => o with { SalesRepLookupPath = Path.GetFullPath(Next()) }, "--category-lookup" => o with { CategoryLookupPath = Path.GetFullPath(Next()) },
-            "--enabled-events" => o with { EnabledEventsPath = Path.GetFullPath(Next()) },
+            "--enabled-events" => throw new CliException("--enabled-events has been removed. Omit it to search all events."),
             "--billing-config" => o with { BillingConfigurationPath = Path.GetFullPath(Next()) },
             "--page-size" => o with { PageSize = Int(Next(), 1, 10000) }, "--max-results" => o with { MaxResults = Int(Next(), 1, 1000000) },
             "--max-updates" => o with { MaxUpdates = Int(Next(), 1, 1000), MaxUpdatesSpecified = true }, "--request-delay-ms" => o with { RequestDelayMs = Int(Next(), 0, 60000) },
@@ -101,6 +108,8 @@ Credentials are read only from MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_K
         if (o.All && !o.MaxUpdatesSpecified) o = o with { MaxUpdates = 10 };
         if (o.EventId.HasValue && !o.ExhibitorId.HasValue) throw new CliException("--event requires --exhibitor.");
         if (!o.Apply && (o.ActivateOrder || o.ActivateExhibitor)) throw new CliException("Status-change switches are valid only in apply mode.");
+        if (!o.Apply && args.Any(x => x.Equals("--skip-order-activation", StringComparison.OrdinalIgnoreCase) || x.Equals("--skip-exhibitor-activation", StringComparison.OrdinalIgnoreCase)))
+            throw new CliException("Status-change switches are valid only in apply mode.");
         if (o.Help) return o;
         if (args.Contains("--billing-config", StringComparer.OrdinalIgnoreCase) && !File.Exists(o.BillingConfigurationPath))
             throw new CliException($"Billing configuration not found: {o.BillingConfigurationPath}");
@@ -114,25 +123,7 @@ Credentials are read only from MOMENTUS_APIUSER, MOMENTUS_SECRET, and MOMENTUS_K
 }
 
 internal sealed class CliException(string message) : Exception(message);
-
-internal static class EnabledEventList
-{
-    public static IReadOnlySet<int> Load(string path)
-    {
-        if (!File.Exists(path)) return new HashSet<int>();
-        var result = new HashSet<int>();
-        var lines = File.ReadAllLines(path);
-        for (var index = 0; index < lines.Length; index++)
-        {
-            var value = lines[index].Split('#', 2)[0].Trim();
-            if (value.Length == 0) continue;
-            if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var eventId) || eventId <= 0)
-                throw new CliException($"Invalid Event ID '{value}' in {path} at line {index + 1}.");
-            result.Add(eventId);
-        }
-        return result;
-    }
-}
+internal sealed class ApplyLimitException(int limit) : Exception($"Apply limit of {limit} order write attempts reached; no further write dispatched.");
 
 internal sealed class Runner(CliOptions options)
 {
@@ -150,19 +141,25 @@ internal sealed class Runner(CliOptions options)
         journalStore = new FileJournalStore(options.StateFolder);
         existing = journalStore.Load();
         CsvRunWriter.Preflight(options.RunFolder); // Fail closed before any API writes or discovery.
-        Console.WriteLine(options.Apply ? "LIVE MODE: eligible READY orders may be updated." : "PREVIEW MODE: no Momentus record will be changed.");
+        Console.WriteLine(options.Probe ? "PROBE MODE: local configuration and storage checks only; no Momentus requests." : options.Apply ? "LIVE MODE: eligible READY orders may be updated." : "PREVIEW MODE: no Momentus record will be changed.");
         Console.WriteLine($"Order activation: {(options.ActivateOrder ? "ON" : "OFF")}; Exhibitor activation: {(options.ActivateExhibitor ? "ON" : "OFF")}.");
-        Console.WriteLine($"Ready-for-invoicing email to kylep@kallman.com: {(options.Apply && options.SendReadyEmail ? "ON" : options.Apply ? "OFF" : "PREVIEW ONLY")}.");
-        var enabledEvents = EnabledEventList.Load(options.EnabledEventsPath);
-        Console.WriteLine(enabledEvents.Count == 0
-            ? "Enabled events: NONE (no orders can be processed)."
-            : $"Enabled events: {string.Join(", ", enabledEvents.Order())}.");
+        Console.WriteLine($"Ready-for-invoicing email to {ReadyEmailBuilder.FinanceRecipients}; CC {ReadyEmailBuilder.FinanceCcRecipient}: {(options.Apply && options.SendReadyEmail ? "ON" : options.Apply ? "OFF" : "PREVIEW ONLY")}.");
+        Console.WriteLine(options.EventId.HasValue ? $"Event scope: {options.EventId.Value}." : "Event scope: ALL EVENTS.");
         if (options.ExhibitorId.HasValue)
-            Console.WriteLine($"INDIVIDUAL TEST BYPASS: exhibitor {options.ExhibitorId.Value} may be evaluated outside the enabled-event list.");
+            Console.WriteLine($"Exhibitor scope: {options.ExhibitorId.Value}.");
         var reps = LookupLoader.LoadSalesReps(options.SalesRepLookupPath);
         var categories = LookupLoader.LoadCategories(options.CategoryLookupPath);
+        if (options.Probe)
+        {
+            var missing = new[] { "MOMENTUS_APIUSER", "MOMENTUS_SECRET", "MOMENTUS_KEY" }
+                .Where(name => string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name))).ToList();
+            if (missing.Count > 0) throw new InvalidOperationException($"Missing environment variables: {string.Join(", ", missing)}.");
+            Console.WriteLine($"PROBE PASS: billing configuration, {reps.Count} sales reps, {categories.Count} categories, {existing.Count} existing journals, credentials present and durable state/report storage verified.");
+            Console.WriteLine($"State folder: {options.StateFolder}; report folder: {options.RunFolder}.");
+            return 0;
+        }
         var gateway = new MomentusGateway(options);
-        var candidates = DiscoverWork(gateway, existing, options, enabledEvents);
+        var candidates = DiscoverWork(gateway, existing, options);
         Console.WriteLine($"Eligible Online Booth Order / Pending Completion records found: {candidates.Count:N0}.");
         return ProcessCandidates(gateway, candidates, reps, categories);
     }
@@ -222,9 +219,16 @@ internal sealed class Runner(CliOptions options)
             row.ExhibitorStatusAction = options.ActivateExhibitor ? (row.ApprovalNeeded ? "BLOCKED BY APPROVAL NEEDED" : "CHANGE TO ACTIVE (2)") : "NO CHANGE (REMAINS 35)";
             row.RunId = runId;
             rows.Add(row);
-            if (options.Apply && row.ValidationStatus is "READY" or "PREPARED" && attempted < options.MaxUpdates)
+            if (options.Apply && row.ValidationStatus is "READY" or "PREPARED")
             {
-                attempted++;
+                var reserved = false;
+                gateway.BeforeWriteDispatch = () =>
+                {
+                    if (reserved) return;
+                    if (attempted >= options.MaxUpdates) throw new ApplyLimitException(options.MaxUpdates);
+                    attempted++;
+                    reserved = true;
+                };
                 try { Apply(gateway, candidate, row); }
                 catch (JournalStorageException)
                 {
@@ -232,15 +236,10 @@ internal sealed class Runner(CliOptions options)
                     catch (Exception reportError) { Console.Error.WriteLine($"Run report could not be saved: {reportError.Message}"); }
                     throw;
                 }
+                finally { gateway.BeforeWriteDispatch = null; }
                 if (row.ServiceOrderUpdateStatus == "COMPLETED") updated++;
             }
             else if (!options.Apply && row.ProcessingId.Length == 0) row.ServiceOrderUpdateStatus = row.ValidationStatus is "READY" or "PREPARED" ? "WOULD UPDATE" : "NOT ATTEMPTED";
-            else if (attempted >= options.MaxUpdates)
-            {
-                row.UpdateMessage = $"Apply limit of {options.MaxUpdates} attempts reached; no write attempted.";
-                if (options.Apply && row.ValidationStatus is "READY" or "PREPARED")
-                { row.Outcome = "REVIEW"; row.ServiceOrderUpdateStatus = "DEFERRED (ATTEMPT CAP)"; }
-            }
         }
         var path = CsvRunWriter.Write(options.RunFolder, started, rows, options.Apply, runId);
         Console.WriteLine($"READY: {rows.Count(x => x.ValidationStatus == "READY"):N0}; PREPARED: {rows.Count(x => x.ValidationStatus == "PREPARED"):N0}; REVIEW: {rows.Count(x => x.ValidationStatus == "REVIEW"):N0}; ATTEMPTED: {attempted:N0}; COMPLETED: {updated:N0}.");
@@ -265,15 +264,14 @@ internal sealed class Runner(CliOptions options)
 
     private static string StageSummary(OrderEvidence evidence) => string.Join("\n", evidence.Stages.Select(x => $"{x.Operation} ({x.Target}): {x.Status}"));
 
-    internal static IEnumerable<OrderEvidence> RecoveryWork(IEnumerable<OrderEvidence> records, CliOptions options, IReadOnlySet<int> enabledEvents) => records.Where(x =>
+    internal static IEnumerable<OrderEvidence> RecoveryWork(IEnumerable<OrderEvidence> records, CliOptions options) => records.Where(x =>
         (!x.Complete || x.ExhibitorActivationPending) && x.Identity.Endpoint == new Uri(options.BaseUrl).AbsoluteUri.TrimEnd('/') && x.Identity.Organization == options.OrganizationCode &&
-        (!options.ExhibitorId.HasValue || x.Identity.Exhibitor == options.ExhibitorId.Value) && (!options.EventId.HasValue || x.Identity.Event == options.EventId.Value) &&
-        EventScopeRules.IsAllowed(x.Identity.Event, enabledEvents, options.ExhibitorId.HasValue));
+        (!options.ExhibitorId.HasValue || x.Identity.Exhibitor == options.ExhibitorId.Value) && (!options.EventId.HasValue || x.Identity.Event == options.EventId.Value));
 
-    internal static IReadOnlyList<Candidate> DiscoverWork(MomentusGateway gateway, IEnumerable<OrderEvidence> records, CliOptions options, IReadOnlySet<int> enabledEvents)
+    internal static IReadOnlyList<Candidate> DiscoverWork(MomentusGateway gateway, IEnumerable<OrderEvidence> records, CliOptions options)
     {
-        var candidates = gateway.FindCandidates(enabledEvents).ToList();
-        foreach (var evidence in RecoveryWork(records, options, enabledEvents))
+        var candidates = gateway.FindCandidates().ToList();
+        foreach (var evidence in RecoveryWork(records, options))
         {
             if (candidates.Any(x => Value(x.Order.OrderNumber) == evidence.Identity.Order)) continue;
             candidates.Add(new Candidate(gateway.GetOrder(evidence.Identity.Order), gateway.GetExhibitor(evidence.Identity.Exhibitor)));
@@ -329,7 +327,8 @@ internal sealed class Runner(CliOptions options)
             ManagedNoteContentHash = noteDecision.Note is null ? "" : ManagedNoteRules.ContentHash(ManagedNoteRules.Text(noteDecision.Note)),
             PaymentScheduleText = paymentSchedule, PaymentScheduleNoteAction = sonAction,
             PaymentScheduleDecisionMessage = string.Join(" ", new[] { contracts.ReviewMessage, noteDecision.Message }.Where(x => x.Length > 0)),
-            ReadyEmailRecipient = "kylep@kallman.com",
+            ReadyEmailRecipient = ReadyEmailBuilder.FinanceRecipients,
+            ReadyEmailCcRecipient = ReadyEmailBuilder.FinanceCcRecipient,
             ExistingBillToAccount = billAccount, ExistingBillToContact = billContact, RequestedBilling = request,
             FinalBillToAccount = billAccount.AccountCode, ProposedBoothNumber = booth.Booth,
             DecisionInputs = PlanGuard.Capture(order, exhibitor, items, booth, categories)
@@ -471,6 +470,14 @@ internal sealed class Runner(CliOptions options)
             var previous = journalStore.Load().SingleOrDefault(x => x.Identity == identity);
             var evidence = previous ?? new OrderEvidence { Identity = identity, Plan = row, CreatedRunId = runId,
                 SendEmail = options.SendReadyEmail, ActivateOrder = options.ActivateOrder, ActivateExhibitor = options.ActivateExhibitor };
+            // A placeholder with no mutation stages has no dispatched plan to recover. The fresh
+            // evaluation can use the current policy; any recorded stage retains its saved options.
+            if (evidence.Stages.Count == 0)
+            {
+                evidence.SendEmail = options.SendReadyEmail;
+                evidence.ActivateOrder = options.ActivateOrder;
+                evidence.ActivateExhibitor = options.ActivateExhibitor;
+            }
             if (evidence.SendEmail != options.SendReadyEmail || evidence.ActivateOrder != options.ActivateOrder || evidence.ActivateExhibitor != options.ActivateExhibitor)
                 throw new RecoveryReviewException("REVIEW: recovery options differ from the saved processing plan.");
             journal = new ProcessingJournal(journalStore, evidence, runId);
@@ -640,6 +647,11 @@ internal sealed class Runner(CliOptions options)
             FinishExhibitorActivation(gateway, journal, row);
         }
 
+        catch (ApplyLimitException ex)
+        {
+            row.Outcome = "REVIEW"; row.ServiceOrderUpdateStatus = "DEFERRED (ATTEMPT CAP)";
+            row.UpdateMessage = ex.Message;
+        }
         catch (UnknownWriteOutcomeException ex)
         {
             row.Outcome = "UNKNOWN"; row.ServiceOrderUpdateStatus = "UNKNOWN WRITE OUTCOME";

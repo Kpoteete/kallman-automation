@@ -5,6 +5,17 @@ namespace ServiceOrderEntry.Tests;
 
 public sealed class RulesTests
 {
+    [Fact]
+    public void SchedulerProbeIsLocalOnlyAndCannotRequestLiveOrActivationOptions()
+    {
+        var probe = CliOptions.Parse(["probe"]);
+        Assert.True(probe.Probe);
+        Assert.False(probe.Apply);
+        Assert.False(probe.ActivateOrder);
+        Assert.False(probe.ActivateExhibitor);
+        Assert.Throws<CliException>(() => CliOptions.Parse(["probe", "--confirm-service-order-entry"]));
+        Assert.Throws<CliException>(() => CliOptions.Parse(["probe", "--activate-order"]));
+    }
     [Theory]
     [InlineData("BK", "BKELLER")]
     [InlineData("Brian Keller", "BKELLER")]
@@ -139,6 +150,21 @@ public sealed class RulesTests
     }
 
     [Fact]
+    public void LiveApplyActivatesBothByDefaultAndPreviewDoesNot()
+    {
+        var live = CliOptions.Parse(["apply", "--confirm-service-order-entry", "--all"]);
+        Assert.True(live.ActivateOrder);
+        Assert.True(live.ActivateExhibitor);
+        var preview = CliOptions.Parse(["preview"]);
+        Assert.False(preview.ActivateOrder);
+        Assert.False(preview.ActivateExhibitor);
+        var recovery = CliOptions.Parse(["apply", "--confirm-service-order-entry", "--all", "--skip-order-activation", "--skip-exhibitor-activation"]);
+        Assert.False(recovery.ActivateOrder);
+        Assert.False(recovery.ActivateExhibitor);
+        Assert.Throws<CliException>(() => CliOptions.Parse(["preview", "--skip-order-activation"]));
+    }
+
+    [Fact]
     public void BulkApplyDefaultsToTenAndRejectsLargerBatches()
     {
         var bulk = CliOptions.Parse(new[] { "apply", "--confirm-service-order-entry", "--all" });
@@ -149,33 +175,25 @@ public sealed class RulesTests
     }
 
     [Fact]
-    public void EnabledEventListReadsIdsCommentsAndRejectsInvalidValues()
+    public void RemovedEventListOptionCannotSilentlyBroadenAnOldCommand()
     {
-        var validPath = Path.GetTempFileName();
-        var invalidPath = Path.GetTempFileName();
-        try
-        {
-            File.WriteAllText(validPath, "# disabled events\n6193\n6208 # reason\n6193\n");
-            File.WriteAllText(invalidPath, "not-an-event\n");
-
-            Assert.Equal(new[] { 6193, 6208 }, EnabledEventList.Load(validPath).Order());
-            Assert.Throws<CliException>(() => EnabledEventList.Load(invalidPath));
-        }
-        finally
-        {
-            File.Delete(validPath);
-            File.Delete(invalidPath);
-        }
+        var error = Assert.Throws<CliException>(() => CliOptions.Parse([
+            "apply", "--confirm-service-order-entry", "--all", "--enabled-events", "old-events.txt"]));
+        Assert.Contains("has been removed", error.Message);
+        Assert.Contains("Omit it to search all events", error.Message);
     }
 
     [Fact]
-    public void IndividualExhibitorRunBypassesEventAllowlistButBulkDoesNot()
+    public void BulkScopeIsAllEventsAndExplicitExhibitorEventScopeRemainsAvailable()
     {
-        IReadOnlySet<int> enabled = new HashSet<int> { 6298 };
-
-        Assert.True(EventScopeRules.IsAllowed(6298, enabled, false));
-        Assert.False(EventScopeRules.IsAllowed(6305, enabled, false));
-        Assert.True(EventScopeRules.IsAllowed(6305, enabled, true));
+        var bulk = CliOptions.Parse(["apply", "--confirm-service-order-entry", "--all"]);
+        Assert.Null(bulk.EventId);
+        Assert.Null(bulk.ExhibitorId);
+        var individual = CliOptions.Parse(["preview", "--exhibitor", "197604", "--event", "6246"]);
+        Assert.Equal(6246, individual.EventId);
+        Assert.Equal(197604, individual.ExhibitorId);
+        Assert.Throws<CliException>(() => CliOptions.Parse(["preview", "--event", "6246"]));
+        Assert.Throws<CliException>(() => CliOptions.Parse(["apply", "--confirm-service-order-entry", "--all", "--event", "6246"]));
     }
 
     [Fact]

@@ -83,6 +83,7 @@ internal sealed class RunRow
     public string PaymentScheduleNoteStatus { get; set; } = "NOT ATTEMPTED";
     public string PaymentScheduleDecisionMessage { get; set; } = "";
     public string ReadyEmailRecipient { get; set; } = "";
+    public string ReadyEmailCcRecipient { get; set; } = "";
     public string ReadyEmailStatus { get; set; } = "NOT ATTEMPTED";
     public string OrderStatusAction { get; set; } = "";
     public string ExhibitorStatusAction { get; set; } = "";
@@ -134,6 +135,7 @@ internal sealed class RunRow
         ServiceOrderUpdateStatus, UpdateMessage, RunId, ProcessingId, JournalStages,
         EffectiveBilling?.Account.Company ?? "", EffectiveBilling?.Contact.FirstName ?? "", EffectiveBilling?.Contact.LastName ?? "",
         EffectiveBilling?.Contact.Email ?? "", EffectiveBilling?.AccountSource ?? "", EffectiveBilling?.ContactSource ?? "",
-        EffectiveBilling?.AboveAddress == true ? "YES" : "NO", AccountMatchKind.ToString(), Outcome, ExhibitorActivationPending ? "YES" : "NO"
+        EffectiveBilling?.AboveAddress == true ? "YES" : "NO", AccountMatchKind.ToString(), Outcome, ExhibitorActivationPending ? "YES" : "NO",
+        ReadyEmailCcRecipient
     ];
 }

@@ -155,8 +155,8 @@ public sealed class JournalRecoveryTests
         Assert.Throws<JournalStorageException>(() => scenario.Apply());
         Assert.Equal("A", scenario.Transport.Order.OrderStatus);
         Assert.Equal(2, scenario.Transport.Exhibitor.ExhibitorStatus);
-        Assert.Empty(scenario.Gateway.FindCandidates(new HashSet<int> { 1 }));
-        var work = Runner.DiscoverWork(scenario.Gateway, durable.Load(), scenario.Options, new HashSet<int> { 1 });
+        Assert.Empty(scenario.Gateway.FindCandidates());
+        var work = Runner.DiscoverWork(scenario.Gateway, durable.Load(), scenario.Options);
         Assert.Single(work);
         Assert.Equal(3, work[0].Order.OrderNumber);
         scenario.Store = durable;
@@ -169,12 +169,28 @@ public sealed class JournalRecoveryTests
         using var scenario = new RetryBoundaryTests.Scenario("Update service order");
         scenario.Apply();
         var records = scenario.Store.Load();
-        Assert.Single(Runner.RecoveryWork(records, scenario.Options, new HashSet<int> { 1 }));
-        Assert.Empty(Runner.RecoveryWork(records, scenario.Options, new HashSet<int> { 99 }));
-        Assert.Empty(Runner.RecoveryWork(records, scenario.Options with { BaseUrl = "https://other.invalid/prod" }, new HashSet<int> { 1 }));
-        Assert.Empty(Runner.RecoveryWork(records, scenario.Options with { OrganizationCode = "99" }, new HashSet<int> { 1 }));
-        Assert.Empty(Runner.RecoveryWork(records, scenario.Options with { ExhibitorId = 99 }, new HashSet<int> { 1 }));
-        Assert.Single(Runner.RecoveryWork(records, scenario.Options with { ExhibitorId = 2 }, new HashSet<int>()));
+        Assert.Single(Runner.RecoveryWork(records, scenario.Options));
+        Assert.Empty(Runner.RecoveryWork(records, scenario.Options with { EventId = 99 }));
+        Assert.Single(Runner.RecoveryWork(records, scenario.Options with { ExhibitorId = 2, EventId = 1 }));
+        Assert.Empty(Runner.RecoveryWork(records, scenario.Options with { BaseUrl = "https://other.invalid/prod" }));
+        Assert.Empty(Runner.RecoveryWork(records, scenario.Options with { OrganizationCode = "99" }));
+        Assert.Empty(Runner.RecoveryWork(records, scenario.Options with { ExhibitorId = 99 }));
+        Assert.Single(Runner.RecoveryWork(records, scenario.Options with { ExhibitorId = 2 }));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(6246)]
+    [InlineData(99999)]
+    public void BulkRecoveryIncludesUnfinishedOrdersFromAnyEvent(int eventId)
+    {
+        using var scenario = new RetryBoundaryTests.Scenario();
+        var evidence = new OrderEvidence { Identity = new(scenario.Options.BaseUrl, scenario.Options.OrganizationCode, eventId, 2, 3) };
+        Assert.Single(Runner.RecoveryWork([evidence], scenario.Options));
+        evidence.Complete = true;
+        Assert.Empty(Runner.RecoveryWork([evidence], scenario.Options));
+        evidence.ExhibitorActivationPending = true;
+        Assert.Single(Runner.RecoveryWork([evidence], scenario.Options));
     }
 
     [Fact]
@@ -261,6 +277,24 @@ public sealed class JournalRecoveryTests
         runner.Apply(scenario.Gateway, new Candidate(scenario.Transport.Order, scenario.Transport.Exhibitor), row);
         Assert.Equal("RECOVERY REVIEW", row.ServiceOrderUpdateStatus);
         Assert.Equal(count, scenario.Transport.Mutations.Count);
+    }
+
+    [Fact]
+    public void UndispatchedPlaceholderCanUseCurrentActivationPolicy()
+    {
+        using var scenario = new RetryBoundaryTests.Scenario();
+        var placeholder = new OrderEvidence { Identity = OrderIdentity.From(scenario.Options, scenario.Row), Plan = scenario.Row, SendEmail = true };
+        Assert.Empty(placeholder.Stages);
+        placeholder.ActivateOrder = false;
+        placeholder.ActivateExhibitor = false;
+        scenario.Store.Save(placeholder);
+        scenario.Apply();
+        Assert.Equal("SUCCESS", scenario.Row.Outcome);
+        Assert.Equal("A", scenario.Transport.Order.OrderStatus);
+        Assert.Equal(2, scenario.Transport.Exhibitor.ExhibitorStatus);
+        var saved = scenario.Store.Load().Single();
+        Assert.True(saved.ActivateOrder);
+        Assert.True(saved.ActivateExhibitor);
     }
 
     [Theory]

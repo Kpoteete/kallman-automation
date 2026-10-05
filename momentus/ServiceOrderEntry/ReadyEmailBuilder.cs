@@ -6,6 +6,28 @@ namespace ServiceOrderEntry;
 
 internal static class ReadyEmailBuilder
 {
+    public const string FinanceRecipients = "MiranaC@kallman.com; LindsayH@kallman.com";
+    public const string FinanceCcRecipient = "kylep@kallman.com";
+    public const string DevelopmentNotice = "This service order automation is in the early stages of development. There may be bugs or small mistakes. Please review the order details before invoicing.";
+
+    public static (IReadOnlyList<string> To, IReadOnlyList<string> Cc) Recipients(RunRow row)
+    {
+        var to = Parse(row.ReadyEmailRecipient, required: true);
+        var cc = Parse(row.ReadyEmailCcRecipient, required: false);
+        if (to.Concat(cc).Distinct(StringComparer.OrdinalIgnoreCase).Count() != to.Count + cc.Count)
+            throw new RecoveryReviewException("REVIEW: duplicate handoff recipients.");
+        return (to, cc);
+    }
+
+    private static IReadOnlyList<string> Parse(string value, bool required)
+    {
+        if (!required && string.IsNullOrWhiteSpace(value)) return [];
+        var addresses = value.Split(';').Select(x => x.Trim()).ToList();
+        if (addresses.Any(x => !BillingRules.ValidEmail(x)))
+            throw new RecoveryReviewException("REVIEW: invalid handoff recipient.");
+        return addresses;
+    }
+
     public static string Subject(RunRow row) => row.ApprovalNeeded
         ? $"WAIT FOR SALES APPROVAL - Service Order {row.OrderNumber}"
         : $"Ready for invoicing - Service Order {row.OrderNumber}";
@@ -19,7 +41,8 @@ internal static class ReadyEmailBuilder
         var contactName = string.Join(" ", new[] { contact.FirstName, contact.LastName }.Where(x => !string.IsNullOrWhiteSpace(x)));
         var contactEmail = contact.Email;
         var html = new StringBuilder();
-        html.Append("<p>Hi Kyle,</p>");
+        html.Append($"<p style=\"font-weight:bold\">{E(DevelopmentNotice)}</p>");
+        html.Append("<p>Hi Mirana and Lindsay,</p>");
         if (row.ApprovalNeeded)
             html.Append("<p style=\"font-size:16px;font-weight:bold;color:#b42318\">WAIT: Do not continue until you receive notice from Sales. This order is pending final approval.</p>");
         html.Append($"<p>Service order {row.OrderNumber} for {E(row.ExhibitorName)} is ready for invoicing.</p>");

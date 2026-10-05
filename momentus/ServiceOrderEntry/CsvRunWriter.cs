@@ -22,7 +22,7 @@ internal static class CsvRunWriter
         "Final Bill-To State", "Final Bill-To Postal Code", "Final Bill-To Country", "Booth Number to Apply", "Validation Status", "Validation Message",
         "Service Order Update Status", "Update/Error Message", "Run ID", "Processing ID", "Journal Stages",
         "Effective Bill-To Company", "Effective Contact First Name", "Effective Contact Last Name", "Effective Contact Email",
-        "Effective Account Source", "Effective Contact Source", "Above Address Retained", "Account Match Kind", "Outcome", "Exhibitor Activation Pending"
+        "Effective Account Source", "Effective Contact Source", "Above Address Retained", "Account Match Kind", "Outcome", "Exhibitor Activation Pending", "Ready Email CC Recipient"
     ];
 
     public static void Preflight(string folder)

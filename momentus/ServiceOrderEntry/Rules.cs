@@ -4,12 +4,6 @@ using System.Text.RegularExpressions;
 
 namespace ServiceOrderEntry;
 
-internal static class EventScopeRules
-{
-    public static bool IsAllowed(int eventId, IReadOnlySet<int> enabledEvents, bool individualExhibitorRun) =>
-        individualExhibitorRun || enabledEvents.Contains(eventId);
-}
-
 internal static class TextRules
 {
     public static string Clean(string? value) => value?.Trim() ?? "";

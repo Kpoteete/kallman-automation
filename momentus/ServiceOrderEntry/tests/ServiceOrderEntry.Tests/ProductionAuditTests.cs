@@ -5,6 +5,64 @@ namespace ServiceOrderEntry.Tests;
 
 public sealed class ProductionAuditTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CompletedPcOrderCannotConsumeAllowanceOrResendOnLaterRuns(bool completedFirst)
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        var options = s.Options with { ActivateOrder = false, ActivateExhibitor = false, MaxUpdates = 1 };
+        var first = new Runner(options); first.UseJournalStore(s.Store);
+        first.Apply(s.Gateway, new(s.Transport.Order, s.Transport.Exhibitor), s.Row);
+        Assert.True(s.Store.Load().Single().OrderComplete);
+        Assert.Equal("PC", s.Transport.Order.OrderStatus);
+        s.Transport.OtherOrders.Add(Other());
+        var completed = new Candidate(s.Transport.Order, s.Transport.Exhibitor);
+        var pending = new Candidate(s.Transport.OtherOrders[0], s.Transport.Exhibitor);
+        var next = new Runner(options); next.UseJournalStore(s.Store);
+        var result = next.ProcessCandidates(s.Gateway, completedFirst ? [completed, pending] : [pending, completed], [], [new("Turnkey", 28, ["Turnkey"])]);
+        Assert.Equal(0, result);
+        Assert.All(s.Store.Load(), x => Assert.True(x.OrderComplete));
+        Assert.Equal(2, s.Transport.Emails.Count);
+        Assert.Single(s.Transport.SavedEmails, x => x.Order == 3);
+        Assert.Single(s.Transport.SavedEmails, x => x.Order == 4);
+        Assert.Null(s.Gateway.BeforeWriteDispatch);
+    }
+
+    [Fact]
+    public void ConfirmedRejectedDispatchConsumesAllowanceAndDefersTheNextOrder()
+    {
+        using var s = new RetryBoundaryTests.Scenario("Update service order");
+        s.Transport.WriteFailureStatus = 400;
+        s.Transport.OtherOrders.Add(Other());
+        var runner = new Runner(s.Options with { ActivateOrder = false, ActivateExhibitor = false, MaxUpdates = 1 });
+        runner.UseJournalStore(s.Store);
+        Assert.Equal(1, runner.ProcessCandidates(s.Gateway, [new(s.Transport.Order, s.Transport.Exhibitor), new(s.Transport.OtherOrders[0], s.Transport.Exhibitor)], [], [new("Turnkey", 28, ["Turnkey"])]));
+        Assert.Single(s.Transport.Requests, x => x.StartsWith("PUT "));
+        var deferred = s.Store.Load().Single(x => x.Identity.Order == 4);
+        Assert.Equal("DEFERRED (ATTEMPT CAP)", deferred.Plan.ServiceOrderUpdateStatus);
+        Assert.All(deferred.Stages, x => Assert.Equal(StageStatus.Planned, x.Status));
+        Assert.Null(s.Gateway.BeforeWriteDispatch);
+    }
+
+    [Fact]
+    public void UnresolvedUnknownRecoveryCannotUseUpAllowanceForNewOrders()
+    {
+        using var s = new RetryBoundaryTests.Scenario("Update service order");
+        var options = s.Options with { ActivateOrder = false, ActivateExhibitor = false, MaxUpdates = 1 };
+        var initial = new Runner(options); initial.UseJournalStore(s.Store);
+        initial.Apply(s.Gateway, new(s.Transport.Order, s.Transport.Exhibitor), s.Row);
+        Assert.Equal("UNKNOWN", s.Row.Outcome);
+        s.Transport.Order.BoothNumber = "DIFFERENT";
+        s.Transport.FaultEnabled = false;
+        s.Transport.OtherOrders.Add(Other());
+        var runner = new Runner(options); runner.UseJournalStore(s.Store);
+        Assert.Equal(3, runner.ProcessCandidates(s.Gateway, [new(s.Transport.Order, s.Transport.Exhibitor), new(s.Transport.OtherOrders[0], s.Transport.Exhibitor)], [], [new("Turnkey", 28, ["Turnkey"])]));
+        Assert.Equal("UNKNOWN", s.Store.Load().Single(x => x.Identity.Order == 3).Plan.Outcome);
+        Assert.True(s.Store.Load().Single(x => x.Identity.Order == 4).OrderComplete);
+        Assert.Single(s.Transport.Emails);
+    }
+
     [Fact] public void ConfirmedTenantZeroStatusCodeIsWrittenAndVerifiedForNewBillingAccount()
     {
         using var s = new RetryBoundaryTests.Scenario("Create organization account", RetryBoundaryTests.TestBillingConfiguration() with { EventSalesNotApplicableCode = "0" });

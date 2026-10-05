@@ -160,6 +160,7 @@
         "resolved": "1.262.8.1",
         "contentHash": "yOK31Ts1DuL5976+qcq1rr13OtkUKhGQjHgfuLrdOcgcMk+dkz4OrC37NsGBqTE7SbIoMQLgbN9nbj0Lz48JFg=="
       }
-    }
+    },
+    "net10.0/win-x64": {}
   }
 }

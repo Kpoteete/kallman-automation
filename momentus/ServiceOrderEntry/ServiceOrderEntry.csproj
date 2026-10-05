@@ -18,7 +18,10 @@
   <ItemGroup>
     <None Update="SalesRepLookup.xlsx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="OrderCategoryLookup.xlsx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <None Update="enabled-events.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="billing-config.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="Run-Scheduled.ps1" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="Install-ServerTask.ps1" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="Verify-ServerTask.ps1" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="SCHEDULING.md" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

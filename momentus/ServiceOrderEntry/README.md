@@ -4,11 +4,11 @@ Completes reviewed Momentus service-order fields for main exhibitors whose statu
 
 The workflow reads the exhibitor, order, account, contacts, order items, booth activities, `SalesRepLookup.xlsx`, and `OrderCategoryLookup.xlsx`. Every candidate receives one row in a CSV under `runs`, named with a timestamp and unique run ID. The CSV is the human-readable report; the per-order journal is the recovery authority.
 
-To enable this automation for selected events, edit `enabled-events.txt` beside `ServiceOrderEntry.exe` and place one numeric Event ID on each line. Blank lines and text after `#` are ignored. Bulk `--all` runs process only listed events. An empty list safely enables no events for bulk processing. Every run prints the active allowlist at startup. A different file can be selected with `--enabled-events PATH`.
+Bulk preview and `--all` apply runs search eligible orders across **all events** in the selected Momentus organization. No event list is required or read. Startup prints `Event scope: ALL EVENTS`. The obsolete `enabled-events.txt` is preserved as a historical file but is no longer copied into new packages; the removed `--enabled-events` option is rejected with instructions to omit it.
 
-An explicit `--exhibitor ID` run is the individual-testing path and bypasses the event allowlist. All other eligibility and safety rules still apply, and live changes still require `apply --confirm-service-order-entry`. The console prints `INDIVIDUAL TEST BYPASS` whenever this exception is active.
+An explicit `--exhibitor ID` run is the individual-testing path; `--event ID` can optionally narrow that exhibitor's run. All eligibility and safety rules still apply, and live changes still require `apply --confirm-service-order-entry`.
 
-It synchronizes the exhibitor categories managed by this workflow with the selected service-order category, line-item text, and exhibitor `TXT_08`. Stale managed categories are removed—for example, a Space Only order removes an old Turnkey exhibitor category and adds Space Only. Categories outside this workflow's table are preserved. Canada (`55`) and USA (`56`) are intentionally not inferred or changed. If Approval Needed (`102`) is already present, it is preserved; the order is still entered but both optional status activations are skipped. Exhibitors carrying Hold (`103`) are excluded before order evaluation and receive no writes.
+It synchronizes the exhibitor categories managed by this workflow with the selected service-order category, line-item text, and exhibitor `TXT_08`. Stale managed categories are removed—for example, a Space Only order removes an old Turnkey exhibitor category and adds Space Only. Categories outside this workflow's table are preserved. Canada (`55`) and USA (`56`) are intentionally not inferred or changed. If Approval Needed (`102`) is already present, it is preserved; the order is still entered but both default status activations are skipped. Exhibitors carrying Hold (`103`) are excluded before order evaluation and receive no writes.
 
 Exhibitor documents in the `CON` Contract PDF category are copied to the service order after its core fields pass readback. The originals remain on the exhibitor. Existing order copies are reused only with verified content and stable identity evidence.
 
@@ -18,7 +18,7 @@ All applicable exhibitor and order `CON` PDFs are read and hashed before schedul
 
 The complete schedule is synchronized only to the `OH`/`SON` note titled `Payment Schedule [KWI ServiceOrderEntry]`. Unrelated SON instructions are preserved. Multiple managed candidates require REVIEW. A legacy `Payment Schedule` note can migrate only when its stable sequence, unchanged title, and content hash are proven by a previously Verified journal stage; an unjournaled legacy note requires ownership review. The managed note sequence and content hash are persisted.
 
-After all order-entry, document, note, and exhibitor-category writes succeed, apply mode sends a concise ready-for-invoicing email through Momentus to `kylep@kallman.com`. The email includes the exhibitor/event/order identifiers, order date, sales rep, category, booth, essential Bill-To account/contact/address details, complete Payment Schedule text, and a list of the attached Contract PDFs. It attaches the verified applicable contract set from the final service order, including contracts originally present only on that order. Attachment bytes, PDF validity, scope and recipient are checked before the first mutation and again before sending. Internal category, status-action, address-action, and contact-action details remain in the run CSV rather than the email. For Approval Needed (`102`), the subject starts with `WAIT FOR SALES APPROVAL` and a prominent message at the top says not to continue until Sales gives notice because final approval is pending. It is enabled by default; use `--skip-ready-email` for an exceptional apply run that must not send it. Email intent stores recipient, subject, body and attachment hashes, and the existing saved-email sequences. An accepted response is journaled before readback of a new saved email and persistence of the supplemental receipt. This establishes accepted send evidence, not delivery. If the send response is lost, a matching description alone does not prove its recipient/body/attachments: restart requires REVIEW and never automatically resends.
+After all order-entry, document, note, and exhibitor-category writes succeed, apply mode sends a concise ready-for-invoicing email through Momentus to `MiranaC@kallman.com` and `LindsayH@kallman.com`, with `kylep@kallman.com` in CC. The email begins with: "This service order automation is in the early stages of development. There may be bugs or small mistakes. Please review the order details before invoicing." This notice is in the email saved against the order; the Payment Schedule note retains its original purpose. The email includes the exhibitor/event/order identifiers, order date, sales rep, category, booth, essential Bill-To account/contact/address details, complete Payment Schedule text, and a list of the attached Contract PDFs. It attaches the verified applicable contract set from the final service order, including contracts originally present only on that order. Attachment bytes, PDF validity, scope and recipient are checked before the first mutation and again before sending. Internal category, status-action, address-action, and contact-action details remain in the run CSV rather than the email. For Approval Needed (`102`), the subject starts with `WAIT FOR SALES APPROVAL` and a prominent message at the top says not to continue until Sales gives notice because final approval is pending. It is enabled by default; use `--skip-ready-email` for an exceptional apply run that must not send it. Email intent stores recipient, subject, body and attachment hashes, and the existing saved-email sequences. An accepted response is journaled before readback of a new saved email and persistence of the supplemental receipt. This establishes accepted send evidence, not delivery. If the send response is lost, a matching description alone does not prove its recipient/body/attachments: restart requires REVIEW and never automatically resends.
 
 ## Safety model
 
@@ -48,7 +48,7 @@ Live runs use one canonical machine-local folder: `%ProgramData%\Kallman\Service
 
 `orders/<identity-hash>.json` records are keyed by canonical base endpoint, organization, event ID, exhibitor ID, and order number. Names and descriptions are never the journal key. Each record retains its processing ID, original run ID, evaluated plan, requested email/activation options, and individual mutation stages. The state transitions are `Planned → Dispatching → Succeeded → Verified`; confirmed rejections are `Failed`, and ambiguous/in-flight effects are `Unknown`. Intent and dispatch state are flushed to disk and atomically replaced before invoking a mutation. The returned response (including created IDs) is persisted immediately, followed by exact-target readback evidence and verification before any next stage. State files contain business evidence, not credentials; preserve them with access appropriate to billing/contact data.
 
-Startup adds incomplete journaled orders to discovery by exact order/exhibitor IDs independently of PC/35 eligibility. Existing endpoint, organization, event allowlist, individual exhibitor scope, confirmation, and attempt-cap restrictions still apply. Recovery reuses the saved plan and verified IDs; changing its email/activation options requires REVIEW. Recorded activations permit recovery to recognize order A/exhibitor 2 without losing the unfinished work. Current identity, Hold, and status checks remain required. Completed records are reused instead of executing the pipeline again.
+Startup adds incomplete journaled orders across all events to discovery by exact order/exhibitor IDs independently of PC/35 eligibility. Existing endpoint, organization, explicit exhibitor/event scope, confirmation, and attempt-cap restrictions still apply. Recovery reuses the saved plan and verified IDs; changing its email/activation options requires REVIEW. Recorded activations permit recovery to recognize order A/exhibitor 2 without losing the unfinished work. Current identity, Hold, and status checks remain required. Completed records are reused instead of executing the pipeline again.
 
 An interrupted `Dispatching` stage becomes `Unknown`. Recovery reads current external state and either persists positive reconciliation as `Verified` or stops with `RECOVERY REVIEW` and a nonzero result. It never automatically redispatches unknown writes, even when an absence search or unchanged old values might suggest non-execution. Created accounts/contacts require their returned ID and matching readback; name/email searches without a returned ID are insufficient proof. Relationships use their exact organization/account/type composite key. Updates use exact target IDs and intended fields. Document recovery uses the returned type/sequence when present, or a unique new destination outside the recorded baseline, plus the source content hash. Notes use returned/existing sequence, intended title/text, and unique matching readback. Email reconciliation requires an accepted response plus a new saved-email record; otherwise it requires review. Planned stages and confirmed rejections may proceed through existing validation; skipped journaled stages must have positive readback evidence before completion.
 
@@ -66,18 +66,21 @@ Apply mode requires a single exhibitor and the exact confirmation switch. The in
 
 Bulk apply requires the explicit `--all` scope and is hard-capped at 10 write attempts. REVIEW rows do not consume the write-attempt cap; failed writes do. Omitting `--max-updates` with `--all` defaults to 10:
 
+The allowance is reserved immediately before an order's first actual write dispatch. Read-only verification of completed orders and unresolved recovery does not consume it. Confirmed rejections and unknown responses to a dispatched write do consume it. Orders deferred at the dispatch boundary retain their planned journal stages and return REVIEW.
+
 ```powershell
 .\publish\ServiceOrderEntry.exe apply --confirm-service-order-entry --all --max-updates 10
 ```
 
-Order and exhibitor statuses remain unchanged by default. Enable either transition explicitly only after reviewing a successful scoped run:
+Live apply activates verified service orders and completed exhibitors by default. Preview never changes either status. Hold and Approval Needed still block activation, and exhibitor activation waits until all scoped pending orders and unfinished journaled work resolve:
 
 ```powershell
 .\publish\ServiceOrderEntry.exe apply --confirm-service-order-entry --exhibitor 193914 --event 6208 --activate-order --activate-exhibitor
 ```
 
-- `--activate-order` changes the successfully updated order from `PC` to `A`.
-- `--activate-exhibitor` changes the successfully updated exhibitor from status `35` to Active status `2`.
+- Order activation changes the successfully completed order from `PC` to `A`.
+- Exhibitor activation changes the completed exhibitor from status `35` to Active status `2` after the group checks pass.
+- `--skip-order-activation` and `--skip-exhibitor-activation` disable the respective transition for an exceptional run or to match an older recovery plan. Existing `--activate-order` and `--activate-exhibitor` switches remain accepted.
 - Before writing, the program rereads the order and exhibitor and requires the original eligibility state, or the exact activation state already verified in its journal.
 - After writing, it rereads and verifies every requested service-order value and enabled status transition.
 - Credentials come only from `MOMENTUS_APIUSER`, `MOMENTUS_SECRET`, and `MOMENTUS_KEY`.
@@ -97,22 +100,22 @@ The customer's selector is authoritative. The revised Step 4 requirements supers
 
 ### Required billing configuration
 
-Supply `--billing-config PATH`, or place `billing-config.json` beside the executable. No tenant Class/Type or Not Applicable status value is guessed. Header/Class/Type must be configured before any processing; Class is one character and Type at most two. SDK documentation defines `OrgAccountUDF` as the organization-account header. The tenant-specific billing Class/Type remain unconfirmed. The user-supplied Account Status screenshot on 2026-10-05 confirms Not Applicable status class `0`, status code `0`, and weight `0`.
+Supply `--billing-config PATH`, or place `billing-config.json` beside the executable. No tenant Class/Type or Not Applicable status value is guessed. Header/Class/Type must be configured before any processing; Class is one character and Type at most two. SDK documentation defines `OrgAccountUDF` as the organization-account header. The saved `Accounts_Pull.xlsx` extract dated 2026-10-04 establishes the Kallman organization-account billing set as Header `OrgAccountUDF`, Class `C`, Type `AU`: its billing-selector column contains `BA`, `ECA`, `Y` and `N`, alongside the billing fields confirmed by `AllCustomFields (2).xlsx`. The user-supplied Account Status screenshot on 2026-10-05 confirms Not Applicable status class `0`, status code `0`, and weight `0`.
 
-Configuration shape (empty Class/Type deliberately fail closed; empty status blocks new account creation):
+Confirmed Kallman configuration (missing Class/Type fail closed; empty status blocks new account creation):
 
 ```json
 {
   "Header": "OrgAccountUDF",
-  "Class": "",
-  "Type": "",
+  "Class": "C",
+  "Type": "AU",
   "EventSalesNotApplicableCode": "0",
   "AboveSelectors": ["", "ECA", "No", "N", "Use Above Address"],
   "SeparateSelectors": ["BA", "Yes", "Y", "Below Address"]
 }
 ```
 
-Fill in the actual billing set identity. The confirmed Kallman **single-character Not Applicable Account Status code is `0`**. `NA` is the business label, not an assumed API code. Selector lists can be configured to match documented tenant values; they must be unique and disjoint, and blank can never authorize separate billing. New account creation remains REVIEW until the Not Applicable code is explicitly configured. Configuration/code readback verifies the supplied code; this offline implementation does not independently establish tenant status semantics.
+The local `billing-config.json` contains these values and is excluded from Git as machine-local configuration. It is copied beside the executable by the project's existing build/publish rules; verify the configuration in any future immutable package. The confirmed Kallman **single-character Not Applicable Account Status code is `0`**. `NA` is the business label, not an assumed API code. Selector lists must be unique and disjoint, and blank can never authorize separate billing. New account creation remains REVIEW until the Not Applicable code is explicitly configured. The account extract exports only the first field set, so it does not establish the absence of additional live sets; runtime selection still requires exactly one matching Header/Class/Type. These identifiers were established offline, with no live account validation or deployment.
 
 ### Effective billing and recovery
 
@@ -138,7 +141,21 @@ dotnet publish .\ServiceOrderEntry.csproj -c Release -r win-x64 --self-contained
 
 ## Deployment
 
-No scheduled task is installed by this project. Publish an immutable Release package, run a scoped preview, review the CSV, then perform a single-exhibitor apply only when the proposed values are correct. Preserve `runs` and the canonical state as operational evidence. The executing account must be able to read/write/flush that state folder; this implementation does not install permissions or migrate legacy state.
+The verified 2026-10-05 all-events package is available for manual runs at `C:\kwi-automations\artifacts\publish\ServiceOrderEntry\2026-10-05-all-events`. Commands for this package:
+
+```powershell
+$folder = 'C:\kwi-automations\artifacts\publish\ServiceOrderEntry\2026-10-05-all-events'
+& "$folder\ServiceOrderEntry.exe" preview
+& "$folder\ServiceOrderEntry.exe" apply --confirm-service-order-entry --all --max-updates 10
+```
+
+The apply command attempts up to ten eligible orders across all events, makes live Momentus changes, sends the normally enabled Finance email, and activates verified orders and completed exhibitors when the safety checks pass. Do not include the obsolete `--enabled-events` option.
+
+For unattended execution every 15 minutes, see [SCHEDULING.md](SCHEDULING.md). `Build-Release.ps1` creates a fresh self-contained Windows package; `Install-ServerTask.ps1` installs the Windows task only when explicitly run. It defaults to preview; `-EnableLiveUpdates` opts into live order entry and ready emails across all events. The installer first executes a local-only `probe` under SYSTEM and refuses to register the recurring task if credentials, configuration, runtime, journal or report storage fail verification. No scheduler is enabled by building or publishing.
+
+The final prepared scheduler package is `C:\kwi-automations\artifacts\publish\ServiceOrderEntry\2026-10-05-scheduler-ready`, with an adjacent ZIP for transfer. The current full suite passed 384 tests and its packaged local probe passed. No recurring task has been installed by this preparation. On the executing computer, open PowerShell as Administrator and run the packaged `Install-ServerTask.ps1 -EnableLiveUpdates`, then verify its first actual run with the packaged `Verify-ServerTask.ps1`.
+
+Preserve `runs` and the canonical state as operational evidence. The executing account must be able to read/write/flush that state folder; the installer does not migrate legacy state. Scheduled logs/reports are separate from immutable executable packages.
 
 ## Step 6: fresh inputs and category rules
 
@@ -150,7 +167,7 @@ The guard supplies freshly read order/exhibitor payloads and computes the manage
 
 The ready email is built from the journaled verified final-state packet, using effective Momentus account/contact/address and committed order values. Requested attention text is not a committed field and is omitted. The packet retains the managed note identity/hash and final order-level attachment identities/hashes. Accepted email evidence must corroborate recipient, body and attachment manifest plus a new saved-email record under the intended order. A lost/uncertain response requires review and never automatically resends.
 
-Before optional order activation, every required order-entry/document/note/category/email stage must be Verified. Before optional exhibitor activation, a complete all-status search must establish that no order for that exhibitor/event is PC. Every scoped journaled order must have verified local completion and no unfinished, Unknown, Failed or Review processing. Current Hold or Approval Needed blocks activation. An already active order alone supplies no authorization. Multiple applicable orders can activate the exhibitor automatically only after every relevant PC and unfinished journaled order resolves. Incomplete searches stop activation. Local order completion and pending shared exhibitor activation are persisted separately so interruption or an attempt cap cannot lose the remaining work.
+Before order activation, every required order-entry/document/note/category/email stage must be Verified. Before exhibitor activation, a complete all-status search must establish that no order for that exhibitor/event is PC. Every scoped journaled order must have verified local completion and no unfinished, Unknown, Failed or Review processing. Current Hold or Approval Needed blocks activation. An already active order alone supplies no authorization. Multiple applicable orders can activate the exhibitor automatically only after every relevant PC and unfinished journaled order resolves. Incomplete searches stop activation. Local order completion and pending shared exhibitor activation are persisted separately so interruption or an attempt cap cannot lose the remaining work.
 
 CSV `Outcome` distinguishes SUCCESS, REVIEW, FAILED and UNKNOWN; `ExhibitorActivationPending` identifies deferred group work. Exit codes are 0 for resolved success, 1 for operational failure, 2 for review or deferred activation and 3 for unknown write outcomes (unknown takes precedence). Both journal and report storage are checked before requests. Evaluation and partial/systemic failures return nonzero.
 
