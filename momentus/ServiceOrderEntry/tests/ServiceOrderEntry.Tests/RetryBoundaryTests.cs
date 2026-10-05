@@ -70,7 +70,7 @@ public sealed class RetryBoundaryTests
         Assert.Contains("dispatched once", scenario.Row.UpdateMessage);
         Assert.Contains("org=10", scenario.Row.UpdateMessage);
         Assert.Contains("HttpCallFailed", scenario.Row.UpdateMessage);
-        Assert.Equal(1, Runner.ApplyExitCode([scenario.Row]));
+        Assert.Equal(3, Runner.ApplyExitCode([scenario.Row]));
         // Earlier confirmed effects are retained, but no stage after uncertainty runs.
         if (stage is not ("Send ready email" or "Activate order" or "Activate exhibitor"))
             Assert.DoesNotContain("Send ready email", scenario.Transport.Mutations);
@@ -353,6 +353,7 @@ public sealed class RetryBoundaryTests
     {
         public List<string> Requests { get; } = [];
         public List<string> Mutations { get; } = [];
+        public List<Ungerboeck.Api.Models.Subjects.EmailsModel> Emails { get; } = [];
         public int ReadFailures { get; set; }
         public int? ReadFailureStatus { get; set; }
         public int? WriteFailureStatus { get; set; }
@@ -364,22 +365,24 @@ public sealed class RetryBoundaryTests
         public string? FailReadPath { get; set; }
         public Action<HttpRequestMessage>? BeforeRequest { get; set; }
         public Func<HttpRequestMessage, HttpResponseMessage?>? SearchOverride { get; set; }
+        public Func<object, object>? ResponseOverride { get; set; }
         public Func<AllAccountsModel, AllAccountsModel>? AccountReadOverride { get; set; }
         public ServiceOrdersModel Order { get; private set; } = new()
         {
-            OrganizationCode = "10", OrderNumber = 3, Event = 1, Function = 4, Account = "ACCOUNT", BillToAccount = "ACCOUNT", BillToContact = "CONTACT", OrderStatus = "PC"
+            OrganizationCode = "10", OrderNumber = 3, Event = 1, Exhibitor = 2, Function = 4, Account = "ACCOUNT", BillToAccount = "ACCOUNT", BillToContact = "CONTACT", OrderStatus = "PC"
         };
         public ExhibitorsModel Exhibitor { get; private set; } = new() { OrganizationCode = "10", ExhibitorID = 2, Event = 1, ExhibitorStatus = 35, ExhibitorType = "ME", Salesperson = "REP", ExhibitorCategory = "" };
+        public readonly List<ServiceOrdersModel> OtherOrders = [];
         public readonly List<ServiceOrderItemsModel> Items = [new() { OrderLineNumber = 1, ResourceCode = "TK", Description = "Turnkey Package" }];
         public readonly List<ActivitiesModel> Activities = [new() { SequenceNumber = 1, Type = "BP", EnteredOn = new DateTime(2026, 10, 4), PlainText = "Accepted booth 101, and had these comments: ok" }];
         public readonly List<DocumentsModel> Copies = [];
         public readonly Dictionary<string, byte[]> DocumentData = [];
-        private readonly List<DocumentsModel> savedEmails = [];
+        public readonly List<DocumentsModel> SavedEmails = [];
         public readonly Dictionary<string, AllAccountsModel> Accounts = [];
         public BillingRequest BillingInstructions { get; set; } = TestRequest();
         private readonly Dictionary<string, RelationshipsModel> relationships = [];
         public readonly List<NotesModel> Notes = failingStage == "Update payment schedule note"
-            ? [new NotesModel { SequenceNumber = 12, Class = "SON", Type = "OH", Title = ManagedNoteRules.Title, PlainText = "Old terms" }] : [];
+            ? [new NotesModel { SequenceNumber = 12, Class = "SON", Type = "OH", OrderNumber = 3, Title = ManagedNoteRules.Title, PlainText = "Old terms" }] : [];
         public readonly List<DocumentsModel> Contracts = [new()
         {
             Type = "C", SequenceNumber = 11, DocumentID = "contract.pdf", Description = "Contract", Category = "CON"
@@ -398,7 +401,7 @@ public sealed class RetryBoundaryTests
                     if (ReadFailureStatus.HasValue) return Error(ReadFailureStatus.Value);
                     throw new TimeoutException("Transient read timeout.");
                 }
-                if (path == "ServiceOrders/10/3") return Json(Order);
+                if (path.StartsWith("ServiceOrders/10/")) return Json(path.EndsWith("/3") ? Order : OtherOrders.Single(x => x.OrderNumber == int.Parse(path.Split('/').Last())));
                 if (path == "Exhibitors/10/2") return Json(Exhibitor);
                 if (path.StartsWith("Relationships/10/")) return Json(relationships[path]);
                 if (path.StartsWith("Accounts/10/"))
@@ -422,11 +425,22 @@ public sealed class RetryBoundaryTests
                 };
                 var query = Uri.UnescapeDataString(request.RequestUri.Query);
                 if (SearchOverride?.Invoke(request) is { } overridden) return overridden;
-                if (path == "Documents/10") return Search(query.Contains("Type eq 'M'") ? savedEmails : query.Contains("Exhibitor eq") ? Contracts : Copies);
-                if (path == "Notes/10") return Search(Notes);
+                if (path == "Documents/10")
+                {
+                    var number = System.Text.RegularExpressions.Regex.Match(query, @"Order eq (\d+)");
+                    var orderId = number.Success ? int.Parse(number.Groups[1].Value) : 3;
+                    return Search(query.Contains("Type eq 'M'") ? SavedEmails.Where(x => x.Order == orderId).ToArray() : query.Contains("Exhibitor eq")
+                        ? Contracts.Where(x => !query.Contains("Category eq 'CON'") || x.Category == "CON").ToArray() : Copies.Where(x => x.Order == orderId).ToArray());
+                }
+                if (path == "Notes/10")
+                {
+                    var number = System.Text.RegularExpressions.Regex.Match(query, @"OrderNumber eq (\d+)");
+                    return Search(Notes.Where(x => (x.OrderNumber ?? 3) == int.Parse(number.Groups[1].Value)).ToArray());
+                }
                 if (path == "ServiceOrderItems/10") return Search(Items);
                 if (path == "Activities/10") return Search(Activities);
-                if (path is "Exhibitors/10" or "ServiceOrders/10") return Search(Array.Empty<ExhibitorsModel>());
+                if (path == "Exhibitors/10") return Search(Array.Empty<ExhibitorsModel>());
+                if (path == "ServiceOrders/10") return Search(new[] { Order }.Concat(OtherOrders));
                 if (path == "Accounts/10")
                 {
                     var pool = Accounts.Values.Where(x => !string.IsNullOrWhiteSpace(x.AccountCode));
@@ -462,11 +476,15 @@ public sealed class RetryBoundaryTests
                 if (ApplyEffect) relationships[$"Relationships/10/{model.MasterAccountCode}/{model.SubordinateAccountCode}/{model.RelationshipType}"] = model;
                 result = model;
             }
-            else if (path == "ServiceOrders/10/3")
+            else if (path.StartsWith("ServiceOrders/10/"))
             {
                 var model = JsonConvert.DeserializeObject<ServiceOrdersModel>(body)!;
                 stage = model.OrderStatus == "A" ? "Activate order" : "Update service order";
-                if (ApplyEffect && WriteFailureStatus is not (>= 400 and < 500)) Order = model;
+                if (ApplyEffect && WriteFailureStatus is not (>= 400 and < 500))
+                {
+                    if (model.OrderNumber == 3) Order = model;
+                    else { OtherOrders.RemoveAll(x => x.OrderNumber == model.OrderNumber); OtherOrders.Add(model); }
+                }
                 result = model;
             }
             else if (path.StartsWith("Documents"))
@@ -498,7 +516,8 @@ public sealed class RetryBoundaryTests
             {
                 stage = "Send ready email";
                 result = JsonConvert.DeserializeObject<EmailsModel>(body)!;
-                if (ApplyEffect) savedEmails.Add(new DocumentsModel { Type = "M", SequenceNumber = 33, Description = ((EmailsModel)result).EmailSubject, Order = 3 });
+                if (ApplyEffect) Emails.Add((EmailsModel)result);
+                if (ApplyEffect) SavedEmails.Add(new DocumentsModel { Type = "M", SequenceNumber = SavedEmails.Count + 33, Description = ((EmailsModel)result).EmailSubject, Order = ((EmailsModel)result).SaveAsUngerboeckDocument.Order });
             }
             else throw new InvalidOperationException($"Unexpected offline mutation: {path}");
 
@@ -506,7 +525,7 @@ public sealed class RetryBoundaryTests
             Mutations.Add(stage); // The fake server accepts the mutation before losing its response.
             if (FaultEnabled && stage == failingStage && EmptyMutationResponse) return Json(null);
             if (FaultEnabled && stage == failingStage && !OmitCreatedIdentity) throw WriteFailure;
-            return Json(result);
+            return Json(ResponseOverride?.Invoke(result) ?? result);
         }
 
         private static HttpResponseMessage Json(object? value) => new(HttpStatusCode.OK)

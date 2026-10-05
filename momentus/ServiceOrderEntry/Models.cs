@@ -47,6 +47,8 @@ internal sealed record AccountInfo(
 
 internal sealed class RunRow
 {
+    public string Outcome { get; set; } = "";
+    public bool ExhibitorActivationPending { get; set; }
     public DecisionInputs? DecisionInputs { get; set; }
     public ContractSelection? Contracts { get; set; }
     public List<ContractCopyIdentity> ContractCopies { get; set; } = [];
@@ -132,6 +134,6 @@ internal sealed class RunRow
         ServiceOrderUpdateStatus, UpdateMessage, RunId, ProcessingId, JournalStages,
         EffectiveBilling?.Account.Company ?? "", EffectiveBilling?.Contact.FirstName ?? "", EffectiveBilling?.Contact.LastName ?? "",
         EffectiveBilling?.Contact.Email ?? "", EffectiveBilling?.AccountSource ?? "", EffectiveBilling?.ContactSource ?? "",
-        EffectiveBilling?.AboveAddress == true ? "YES" : "NO", AccountMatchKind.ToString()
+        EffectiveBilling?.AboveAddress == true ? "YES" : "NO", AccountMatchKind.ToString(), Outcome, ExhibitorActivationPending ? "YES" : "NO"
     ];
 }

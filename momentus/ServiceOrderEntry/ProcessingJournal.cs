@@ -45,6 +45,9 @@ internal sealed class OrderEvidence
     public bool ActivateOrder { get; set; }
     public bool ActivateExhibitor { get; set; }
     public bool Complete { get; set; }
+    public bool OrderComplete { get; set; }
+    public bool ExhibitorActivationPending { get; set; }
+    public VerifiedHandoff? Handoff { get; set; }
     public List<StageEvidence> Stages { get; set; } = [];
     public List<string> SearchFailures { get; set; } = [];
 }

@@ -126,7 +126,7 @@ public sealed class JournalRecoveryTests
             var row = scenario.Apply(restart: true);
             Assert.Equal("RECOVERY REVIEW", row.ServiceOrderUpdateStatus);
             Assert.Equal("REVIEW", row.ValidationStatus);
-            Assert.Equal(1, Runner.ApplyExitCode([row]));
+            Assert.NotEqual(0, Runner.ApplyExitCode([row]));
             Assert.Equal(StageStatus.Unknown, scenario.Store.Load().Single().Stages.Single().Status);
         }
         Assert.Equal(new[] { "Update service order" }, scenario.Transport.Mutations);

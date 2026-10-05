@@ -148,7 +148,8 @@ internal sealed class Runner(CliOptions options)
         CanonicalState.Validate(options);
         using var runLock = RunLock.Acquire(options.StateFolder);
         journalStore = new FileJournalStore(options.StateFolder);
-        existing = journalStore.Load(); // Fail closed before any API writes or discovery.
+        existing = journalStore.Load();
+        CsvRunWriter.Preflight(options.RunFolder); // Fail closed before any API writes or discovery.
         Console.WriteLine(options.Apply ? "LIVE MODE: eligible READY orders may be updated." : "PREVIEW MODE: no Momentus record will be changed.");
         Console.WriteLine($"Order activation: {(options.ActivateOrder ? "ON" : "OFF")}; Exhibitor activation: {(options.ActivateExhibitor ? "ON" : "OFF")}.");
         Console.WriteLine($"Ready-for-invoicing email to kylep@kallman.com: {(options.Apply && options.SendReadyEmail ? "ON" : options.Apply ? "OFF" : "PREVIEW ONLY")}.");
@@ -163,6 +164,25 @@ internal sealed class Runner(CliOptions options)
         var gateway = new MomentusGateway(options);
         var candidates = DiscoverWork(gateway, existing, options, enabledEvents);
         Console.WriteLine($"Eligible Online Booth Order / Pending Completion records found: {candidates.Count:N0}.");
+        return ProcessCandidates(gateway, candidates, reps, categories);
+    }
+
+    internal int ProcessCandidates(MomentusGateway gateway, IReadOnlyList<Candidate> candidates, IReadOnlyList<SalesRepLookup> reps, IReadOnlyList<CategoryLookup> categories)
+    {
+        CsvRunWriter.Preflight(options.RunFolder);
+        if (options.Apply)
+        {
+            // Retain every intended order, including those deferred by the attempt cap or later made active externally.
+            foreach (var candidate in candidates)
+            {
+                var identity = new OrderIdentity(new Uri(options.BaseUrl).AbsoluteUri.TrimEnd('/'), options.OrganizationCode,
+                    Value(candidate.Exhibitor.Event), Value(candidate.Exhibitor.ExhibitorID), Value(candidate.Order.OrderNumber));
+                if (journalStore!.Load().Any(x => x.Identity == identity)) continue;
+                journalStore.Save(new OrderEvidence { Identity = identity, CreatedRunId = runId, SendEmail = options.SendReadyEmail,
+                    ActivateOrder = options.ActivateOrder, ActivateExhibitor = options.ActivateExhibitor,
+                    Plan = new RunRow { EventId = identity.Event, ExhibitorId = identity.Exhibitor, OrderNumber = identity.Order, Outcome = "PENDING", ValidationStatus = "PREPARED" } });
+            }
+        }
         var updated = 0;
         var attempted = 0;
         foreach (var candidate in candidates)
@@ -172,8 +192,8 @@ internal sealed class Runner(CliOptions options)
             {
                 var previous = existing.SingleOrDefault(x => x.Identity == new OrderIdentity(new Uri(options.BaseUrl).AbsoluteUri.TrimEnd('/'), options.OrganizationCode,
                     Value(candidate.Exhibitor.Event), Value(candidate.Exhibitor.ExhibitorID), Value(candidate.Order.OrderNumber)));
-                row = previous?.Plan ?? Evaluate(gateway, candidate, reps, categories);
-                if (previous is not null)
+                row = previous is not null && previous.Stages.Count > 0 ? previous.Plan : Evaluate(gateway, new Candidate(gateway.GetOrder(Value(candidate.Order.OrderNumber)), gateway.GetExhibitor(Value(candidate.Exhibitor.ExhibitorID))), reps, categories);
+                if (previous is not null && previous.Stages.Count > 0)
                 {
                     // Recovery admission is not billing READY. Apply reconciles stages and validates current billing before further writes.
                     row.ValidationStatus = previous.Complete ? ValidationRules.Validate(row).Status : "PREPARED";
@@ -194,15 +214,10 @@ internal sealed class Runner(CliOptions options)
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                row = new RunRow
-                {
-                    EventId = Value(candidate.Exhibitor.Event), ExhibitorId = Value(candidate.Exhibitor.ExhibitorID),
-                    OrderNumber = Value(candidate.Order.OrderNumber), ExhibitorName = First(candidate.Exhibitor.CompanyBannerName, candidate.Exhibitor.CompanyName, candidate.Exhibitor.AccountCode),
-                    ValidationStatus = "REVIEW", ValidationMessage = $"Evaluation failed: {ex.Message}", UpdateMessage = ex.Message
-                };
-            }
+            catch (JournalStorageException) { throw; }
+            catch (Exception ex) { row = FailureRules.Evaluation(candidate, ex); }
+            if (row.Outcome.Length == 0) row.Outcome = row.ValidationStatus == "REVIEW" ? "REVIEW" : "SUCCESS";
+            if (options.Apply && row.ValidationStatus is "REVIEW" or "FAILED") PersistEvaluation(row);
             row.OrderStatusAction = options.ActivateOrder ? (row.ApprovalNeeded ? "BLOCKED BY APPROVAL NEEDED" : "CHANGE TO ACTIVE (A)") : "NO CHANGE (REMAINS PC)";
             row.ExhibitorStatusAction = options.ActivateExhibitor ? (row.ApprovalNeeded ? "BLOCKED BY APPROVAL NEEDED" : "CHANGE TO ACTIVE (2)") : "NO CHANGE (REMAINS 35)";
             row.RunId = runId;
@@ -228,13 +243,24 @@ internal sealed class Runner(CliOptions options)
         return ApplyExitCode(rows);
     }
 
-    internal static int ApplyExitCode(IEnumerable<RunRow> rows) =>
-        rows.Any(x => x.ServiceOrderUpdateStatus is "FAILED" or "UNKNOWN WRITE OUTCOME" or "RECOVERY REVIEW") ? 1 : 0;
+    internal static int ApplyExitCode(IEnumerable<RunRow> rows) => FailureRules.ExitCode(rows);
+
+    private void PersistEvaluation(RunRow row)
+    {
+        var identity = OrderIdentity.From(options, row);
+        var previous = journalStore!.Load().SingleOrDefault(x => x.Identity == identity);
+        var evidence = previous ?? new OrderEvidence { Identity = identity, CreatedRunId = runId, Plan = row,
+            SendEmail = options.SendReadyEmail, ActivateOrder = options.ActivateOrder, ActivateExhibitor = options.ActivateExhibitor };
+        if (evidence.Stages.Count == 0) evidence.Plan = row;
+        evidence.Plan.Outcome = row.Outcome;
+        evidence.Complete = false;
+        journalStore.Save(evidence);
+    }
 
     private static string StageSummary(OrderEvidence evidence) => string.Join("\n", evidence.Stages.Select(x => $"{x.Operation} ({x.Target}): {x.Status}"));
 
     internal static IEnumerable<OrderEvidence> RecoveryWork(IEnumerable<OrderEvidence> records, CliOptions options, IReadOnlySet<int> enabledEvents) => records.Where(x =>
-        !x.Complete && x.Identity.Endpoint == new Uri(options.BaseUrl).AbsoluteUri.TrimEnd('/') && x.Identity.Organization == options.OrganizationCode &&
+        (!x.Complete || x.ExhibitorActivationPending) && x.Identity.Endpoint == new Uri(options.BaseUrl).AbsoluteUri.TrimEnd('/') && x.Identity.Organization == options.OrganizationCode &&
         (!options.ExhibitorId.HasValue || x.Identity.Exhibitor == options.ExhibitorId.Value) && (!options.EventId.HasValue || x.Identity.Event == options.EventId.Value) &&
         EventScopeRules.IsAllowed(x.Identity.Event, enabledEvents, options.ExhibitorId.HasValue));
 
@@ -447,12 +473,23 @@ internal sealed class Runner(CliOptions options)
             gateway.Journal = journal;
             journal.Save();
             gateway.ReconcileIncomplete();
-            if (evidence.Complete) { row.ServiceOrderUpdateStatus = "COMPLETED"; row.UpdateMessage = "Reused completed durable processing evidence."; return; }
+            if (evidence.OrderComplete && evidence.Handoff is not null)
+            {
+                HandoffRules.RequireOrderStages(evidence, includeActivation: true);
+                row.Outcome = "SUCCESS";
+                evidence.Plan = row;
+                evidence.Complete = evidence.Stages.All(x => x.Status == StageStatus.Verified);
+                journal.Save();
+                FinishExhibitorActivation(gateway, journal, row);
+                return;
+            }
+            if (evidence.Complete) throw new RecoveryReviewException("REVIEW: legacy completed journal lacks verified final handoff evidence.");
             evidence.Plan = row;
             var currentOrder = gateway.GetOrder(row.OrderNumber);
             var currentExhibitor = gateway.GetExhibitor(row.ExhibitorId);
             bool Verified(string operation) => evidence.Stages.Any(x => x.Operation == operation && x.Status == StageStatus.Verified);
-            if (Value(currentOrder.Event) != row.EventId || Value(currentExhibitor.Event) != row.EventId ||
+            if (!TextRules.Same(currentOrder.OrganizationCode, options.OrganizationCode) || !TextRules.Same(currentExhibitor.OrganizationCode, options.OrganizationCode) ||
+                Value(currentOrder.Event) != row.EventId || Value(currentExhibitor.Event) != row.EventId ||
                 Value(currentOrder.OrderNumber) != row.OrderNumber || Value(currentExhibitor.ExhibitorID) != row.ExhibitorId ||
                 (Value(currentOrder.Exhibitor) > 0 && Value(currentOrder.Exhibitor) != row.ExhibitorId))
                 throw new RecoveryReviewException("REVIEW: current order/exhibitor identity conflicts with the durable plan.");
@@ -469,8 +506,21 @@ internal sealed class Runner(CliOptions options)
                 ManagedNoteRules.ContentHash(row.Contracts.PaymentSchedule) != ManagedNoteRules.ContentHash(row.PaymentScheduleText))
                 throw new RecoveryReviewException("REVIEW: contract/schedule identity is unresolved or conflicts with the saved plan.");
             BillingGuard.Preflight(gateway, row, currentOrder, journal);
-            gateway.MutationGuard = (operation, intent) => PlanGuard.BeforeWrite(gateway, row, operation, intent);
+            gateway.MutationGuard = (operation, intent) =>
+            {
+                if (operation == "Activate exhibitor") return ActivationRules.BeforeWrite(gateway, evidence, journalStore.Load());
+                var guarded = PlanGuard.BeforeWrite(gateway, row, operation, intent);
+                if (operation == "Send ready email")
+                {
+                    var prepared = Newtonsoft.Json.JsonConvert.SerializeObject(evidence.Handoff);
+                    var current = HandoffRules.Verify(gateway, row, journal);
+                    if (prepared != Newtonsoft.Json.JsonConvert.SerializeObject(current))
+                        throw new RecoveryReviewException("REVIEW: verified handoff changed while preparing the email; stale send stopped.");
+                }
+                return guarded;
+            };
             _ = PlanGuard.BeforeWrite(gateway, row, "Preflight", new object());
+            _ = HandoffRules.PreflightAttachments(gateway, row);
             journal.Save();
             var originalBillToAccount = row.ExistingBillToAccount.AccountCode;
             if (row.BillToAddressAction == "CREATE RELATED BILL-TO ACCOUNT")
@@ -534,8 +584,6 @@ internal sealed class Runner(CliOptions options)
             BillingGuard.VerifyFinal(gateway, row);
             journal.Save();
 
-            var sourceDocuments = row.Contracts?.Sources.Select(x => x.Document).ToList()
-                ?? throw new RecoveryReviewException("REVIEW: legacy plan lacks contract identity evidence.");
             var copied = gateway.EnsureContractCopies(verifiedOrder, row);
             row.ContractPdfCopyStatus = copied == 0 ? "ALREADY COPIED OR NONE FOUND" : $"COPIED {copied}";
             gateway.VerifyUndispatched("Copy contract document");
@@ -556,52 +604,97 @@ internal sealed class Runner(CliOptions options)
             }
             gateway.VerifyUndispatched("Update exhibitor categories");
 
-            BillingGuard.VerifyFinal(gateway, row);
-            journal.Save();
+            var handoff = HandoffRules.Verify(gateway, row, journal);
             row.ReadyEmailStatus = Verified("Send ready email") ? "ALREADY SENT (JOURNAL VERIFIED)" : options.SendReadyEmail
-                ? gateway.SendReadyForInvoicingEmail(row, sourceDocuments)
+                ? gateway.SendReadyForInvoicingEmail(row, handoff.Attachments)
                 : "SKIPPED BY OPTION";
             gateway.VerifyUndispatched("Send ready email");
 
             var activationBlocked = row.ApprovalNeeded && (options.ActivateOrder || options.ActivateExhibitor);
             if (!activationBlocked && options.ActivateOrder && !Verified("Activate order"))
             {
+                HandoffRules.RequireOrderStages(evidence, includeActivation: false);
+                _ = HandoffRules.Verify(gateway, row, journal);
                 verifiedOrder.OrderStatus = "A";
                 gateway.UpdateOrder(verifiedOrder);
                 if (!TextRules.Same(gateway.GetOrder(row.OrderNumber).OrderStatus, "A")) throw new InvalidOperationException("Order status readback did not confirm Active (A).");
             }
-            if (!activationBlocked && options.ActivateExhibitor && !Verified("Activate exhibitor"))
-            {
-                currentExhibitor.ExhibitorStatus = 2;
-                gateway.UpdateExhibitor(currentExhibitor);
-                if (Value(gateway.GetExhibitor(row.ExhibitorId).ExhibitorStatus) != 2) throw new InvalidOperationException("Exhibitor status readback did not confirm Active (2).");
-            }
-            row.ServiceOrderUpdateStatus = "COMPLETED";
-            if (evidence.Stages.Any(x => x.Status != StageStatus.Verified))
-                throw new RecoveryReviewException("REVIEW: the processing journal still contains unresolved stages.");
-            var activationMessage = activationBlocked ? "blocked because exhibitor category 102 Approval Needed is present" : "processed as requested";
-            row.UpdateMessage = $"Service order fields, exhibitor categories, and Contract PDF copies updated and verified. Status activation {activationMessage}.";
-            evidence.Plan = row;
+            HandoffRules.RequireOrderStages(evidence, includeActivation: true);
+            evidence.OrderComplete = true;
             evidence.Complete = true;
+            row.Outcome = "SUCCESS";
+            evidence.ExhibitorActivationPending = options.ActivateExhibitor;
+            row.ExhibitorActivationPending = evidence.ExhibitorActivationPending;
             journal.Save();
+            FinishExhibitorActivation(gateway, journal, row);
         }
+
         catch (UnknownWriteOutcomeException ex)
         {
-            row.ServiceOrderUpdateStatus = "UNKNOWN WRITE OUTCOME";
+            row.Outcome = "UNKNOWN"; row.ServiceOrderUpdateStatus = "UNKNOWN WRITE OUTCOME";
             row.UpdateMessage = $"{ex.Message} Subsequent mutation stages for this record were stopped.";
             if (ex.Operation == "Send ready email") row.ReadyEmailStatus = "UNKNOWN WRITE OUTCOME";
             if (ex.Operation == "Copy contract document") row.ContractPdfCopyStatus = "UNKNOWN WRITE OUTCOME";
             if (ex.Operation is "Add payment schedule note" or "Update payment schedule note") row.PaymentScheduleNoteStatus = "UNKNOWN WRITE OUTCOME";
         }
-        catch (JournalStorageException ex) { storageFailed = true; row.ServiceOrderUpdateStatus = "FAILED"; row.UpdateMessage = ex.Message; throw; }
-        catch (RecoveryReviewException ex) { row.ValidationStatus = "REVIEW"; row.ServiceOrderUpdateStatus = "RECOVERY REVIEW"; row.UpdateMessage = ex.Message; }
-        catch (Exception ex) { row.ServiceOrderUpdateStatus = "FAILED"; row.UpdateMessage = ex.Message; }
+        catch (JournalStorageException ex) { storageFailed = true; row.Outcome = "FAILED"; row.ServiceOrderUpdateStatus = "FAILED"; row.UpdateMessage = ex.Message; throw; }
+        catch (RecoveryReviewException ex) { row.Outcome = journal?.Evidence.Stages.Any(x => x.Status is StageStatus.Unknown or StageStatus.Dispatching or StageStatus.Succeeded) == true ? "UNKNOWN" : "REVIEW"; row.ValidationStatus = "REVIEW"; row.ServiceOrderUpdateStatus = "RECOVERY REVIEW"; row.UpdateMessage = ex.Message; }
+        catch (Exception ex) { row.Outcome = "FAILED"; row.ServiceOrderUpdateStatus = "FAILED"; row.UpdateMessage = ex.Message; }
         finally
         {
+            if (journal is not null && !storageFailed)
+            {
+                journal.Evidence.Plan = row;
+                if (row.Outcome is "REVIEW" or "FAILED" or "UNKNOWN") journal.Evidence.Complete = false;
+                journal.Save();
+            }
             if (journal is not null) row.JournalStages = storageFailed ? "Persistence failed; consult last durable journal, not in-memory state." : StageSummary(journal.Evidence);
             gateway.MutationGuard = null;
             gateway.Journal = null;
         }
+    }
+
+    private void FinishExhibitorActivation(MomentusGateway gateway, ProcessingJournal journal, RunRow row)
+    {
+        var evidence = journal.Evidence;
+        row.ServiceOrderUpdateStatus = "COMPLETED";
+        row.ValidationStatus = "READY";
+        row.UpdateMessage = "Required order-level stages are Verified.";
+        if (!evidence.ActivateExhibitor) { evidence.ExhibitorActivationPending = false; row.ExhibitorActivationPending = false; journal.Save(); return; }
+        evidence.ExhibitorActivationPending = true;
+        row.ExhibitorActivationPending = true;
+        journal.Save();
+        var decision = ActivationRules.Check(gateway, evidence, journalStore!.Load());
+        if (decision.Allowed)
+        {
+            evidence.Complete = false; // The upcoming shared activation stage must be journaled before dispatch.
+            journal.Save();
+            gateway.MutationGuard = (operation, intent) => operation == "Activate exhibitor"
+                ? ActivationRules.BeforeWrite(gateway, evidence, journalStore.Load())
+                : throw new RecoveryReviewException("REVIEW: completed order recovery permits only the pending shared exhibitor activation.");
+            decision.Exhibitor.ExhibitorStatus = 2;
+            gateway.UpdateExhibitor(decision.Exhibitor);
+            decision = ActivationRules.Check(gateway, evidence, journalStore.Load());
+            if (!decision.AlreadyVerified) throw new RecoveryReviewException("REVIEW: group activation readback is not Verified.");
+        }
+        evidence.Complete = evidence.Stages.All(x => x.Status == StageStatus.Verified);
+        evidence.ExhibitorActivationPending = !decision.AlreadyVerified;
+        row.ExhibitorActivationPending = evidence.ExhibitorActivationPending;
+        row.ExhibitorStatusAction = decision.AlreadyVerified ? "ACTIVE (GROUP VERIFIED)" : "DEFERRED: " + decision.Message;
+        row.UpdateMessage += " " + decision.Message;
+        if (decision.AlreadyVerified)
+        {
+            foreach (var peer in ActivationRules.Group(journalStore.Load(), evidence.Identity).Where(x => x.Identity != evidence.Identity && x.ExhibitorActivationPending))
+            {
+                peer.ExhibitorActivationPending = false;
+                peer.Plan.ExhibitorActivationPending = false;
+                peer.Plan.ExhibitorStatusAction = "ACTIVE (GROUP VERIFIED)";
+                journalStore.Save(peer);
+                foreach (var processed in rows.Where(x => x.EventId == peer.Identity.Event && x.ExhibitorId == peer.Identity.Exhibitor && x.OrderNumber == peer.Identity.Order))
+                { processed.ExhibitorActivationPending = false; processed.ExhibitorStatusAction = "ACTIVE (GROUP VERIFIED)"; }
+            }
+        }
+        journal.Save();
     }
 
     private static void VerifyOrder(ServiceOrdersModel order, RunRow row, bool activated)

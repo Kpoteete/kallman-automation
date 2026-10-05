@@ -35,7 +35,6 @@ internal static class ReadyEmailBuilder
 
         html.Append("<p><strong>Bill-To Information</strong></p><table style=\"border-collapse:collapse\">");
         AddRow(html, "Bill-To account", $"{billToCompany} ({row.FinalBillToAccount})");
-        AddRow(html, "Invoice attention", row.EffectiveBilling?.AboveAddress == true ? "" : row.RequestedBilling.AttentionOf);
         AddRow(html, "Bill-To contact", $"{contactName} ({row.FinalBillToContact})");
         AddRow(html, "Email", contactEmail);
         AddRow(html, "Address", row.FinalAddress);

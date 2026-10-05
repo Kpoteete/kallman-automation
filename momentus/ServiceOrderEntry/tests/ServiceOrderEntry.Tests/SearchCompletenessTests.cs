@@ -18,9 +18,9 @@ public sealed class SearchCompletenessTests
     };
     private static DocumentsModel Document(int id, string description = "Contract", string type = "C") => new()
     {
-        SequenceNumber = id, Type = type, DocumentID = $"{id}.pdf", Category = "CON", Description = description
+        SequenceNumber = id, Type = type, DocumentID = $"{id}.pdf", Category = "CON", Description = description, Order = 3
     };
-    private static NotesModel Note(int id) => new() { SequenceNumber = id, Type = "OH", Class = "SON", Title = ManagedNoteRules.Title, PlainText = RetryBoundaryTests.TestSchedule };
+    private static NotesModel Note(int id) => new() { SequenceNumber = id, Type = "OH", Class = "SON", OrderNumber = 3, Title = ManagedNoteRules.Title, PlainText = RetryBoundaryTests.TestSchedule };
     private static ActivitiesModel Activity(int id, string booth, DateTime entered) => new()
     {
         SequenceNumber = id, EnteredOn = entered, PlainText = $"Accepted booth {booth}, and had these comments: ok"
@@ -340,8 +340,8 @@ public sealed class SearchCompletenessTests
     {
         using var s = new RetryBoundaryTests.Scenario();
         Pages(s, "Documents", [Document(1, "Other email", "M")], [Document(2, "Ready for invoicing - Service Order 3", "M")]);
-        Assert.True(s.Gateway.ReadyEmailWasSent(3));
-        Assert.Equal("ALREADY SENT", s.Gateway.SendReadyForInvoicingEmail(s.Row, []));
+        Assert.Throws<RecoveryReviewException>(() => s.Gateway.ReadyEmailWasSent(3));
+        Assert.Throws<RecoveryReviewException>(() => s.Gateway.SendReadyForInvoicingEmail(s.Row, []));
         Assert.Empty(s.Transport.Mutations);
     }
 
@@ -427,9 +427,9 @@ public sealed class SearchCompletenessTests
     public void SavedEmailRecoveryUsesPageTwoEvidenceAndRetainsUncertaintyOnFailure(bool fail)
     {
         using var s = new RetryBoundaryTests.Scenario();
-        var intent = new EmailsModel { EmailSubject = "Ready for invoicing - Service Order 3" };
-        var stage = s.Gateway.Journal!.Prepare("Send ready email", "offline accepted email", JsonConvert.SerializeObject(intent),
-            new() { ["order"] = "3", ["baseline"] = "" });
+        var intent = new EmailsModel { EmailSubject = "Ready for invoicing - Service Order 3", HtmlText = "offline body", SaveAsUngerboeckDocument = new() { Order = 3 } };
+        var stage = s.Gateway.Journal!.Prepare("Send ready email", "offline accepted email", JsonConvert.SerializeObject(new { intent.Organization, intent.EmailSubject, intent.HtmlText, intent.SendToAddresses, intent.SaveAsUngerboeckDocument }),
+            new() { ["order"] = "3", ["baseline"] = "", ["bodyHash"] = OrderIdentity.Hash(intent.HtmlText), ["attachmentHashes"] = "" });
         s.Gateway.Journal.Dispatching(stage);
         s.Gateway.Journal.Result(stage, JsonConvert.SerializeObject(intent));
         Pages(s, "Documents", [Document(1, "Other email", "M")], [Document(2, intent.EmailSubject, "M")], failLater: fail);

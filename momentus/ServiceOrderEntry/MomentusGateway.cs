@@ -63,6 +63,23 @@ internal sealed class MomentusGateway
         return result.OrderBy(x => Value(x.Order.Event)).ThenBy(x => Value(x.Order.OrderNumber)).ToList();
     }
 
+    internal IReadOnlyList<ServiceOrdersModel> GetExhibitorOrders(int exhibitor, int eventId)
+    {
+        var result = SearchOrders($"Exhibitor eq {exhibitor} and Event eq {eventId}");
+        if (result.Any(x => x.OrganizationCode != options.OrganizationCode || x.Exhibitor != exhibitor || x.Event != eventId || x.OrderNumber <= 0 || string.IsNullOrWhiteSpace(x.OrderStatus)))
+            throw new RecoveryReviewException("REVIEW: activation order set has missing/conflicting exhibitor, event, identity, or status.");
+        return result;
+    }
+
+    internal byte[] VerifiedDocumentData(DocumentInfo document)
+    {
+        if (document.ContentHash.Length == 0) throw new RecoveryReviewException("REVIEW: attachment lacks content identity.");
+        var bytes = DownloadDocument(document);
+        if (BytesHash(bytes) != document.ContentHash) throw new RecoveryReviewException("REVIEW: attachment content changed after validation.");
+        _ = PaymentScheduleExtractor.FromPdf(bytes); // Reject malformed PDFs before any write/send.
+        return bytes;
+    }
+
     public ExhibitorsModel GetExhibitor(int id) => CallRead(() => client.Endpoints.Exhibitors.Get(options.OrganizationCode, id));
     public ServiceOrdersModel GetOrder(int number) => CallRead(() => client.Endpoints.ServiceOrders.Get(options.OrganizationCode, number));
     public AccountInfo GetAccount(string code)
@@ -198,9 +215,12 @@ internal sealed class MomentusGateway
     public IReadOnlyList<NotesModel> GetOrderSonNotes(int orderNumber)
     {
         var filter = $"Type eq 'OH' and OrderNumber eq {orderNumber} and Class eq 'SON'";
-        return SearchAll(search => client.Endpoints.Notes.Search(options.OrganizationCode, filter, search),
+        var notes = SearchAll(search => client.Endpoints.Notes.Search(options.OrganizationCode, filter, search),
             client.Endpoints.Notes.NavigateSearchList, "Notes", filter,
             x => NumericIdentity(x.SequenceNumber), nameof(NotesModel.SequenceNumber));
+        if (notes.Any(x => x.OrderNumber != orderNumber || x.Type != "OH" || x.Class != "SON"))
+            throw new RecoveryReviewException("REVIEW: managed-note search returned conflicting/missing order-header identity.");
+        return notes;
     }
 
     public string SavePaymentScheduleNote(int orderNumber, string text)
@@ -249,35 +269,33 @@ internal sealed class MomentusGateway
 
     public bool ReadyEmailWasSent(int orderNumber)
     {
-        if (File.Exists(ReadyEmailReceiptPath(orderNumber))) return true;
-        return GetSavedEmails(orderNumber).Any(x =>
-            TextRules.Same(x.Description, $"Ready for invoicing - Service Order {orderNumber}") ||
-            TextRules.Same(x.Description, $"WAIT FOR SALES APPROVAL - Service Order {orderNumber}"));
+        var verified = Journal?.Evidence.Identity.Order == orderNumber && Journal.Evidence.Stages.Any(x => x.Operation == "Send ready email" && x.Status == StageStatus.Verified);
+        if (verified) return true;
+        var matches = GetSavedEmails(orderNumber).Where(x => TextRules.Same(x.Description, $"Ready for invoicing - Service Order {orderNumber}") ||
+            TextRules.Same(x.Description, $"WAIT FOR SALES APPROVAL - Service Order {orderNumber}")).ToList();
+        if (matches.Count > 0 || File.Exists(ReadyEmailReceiptPath(orderNumber)))
+            throw new RecoveryReviewException("REVIEW: saved email/legacy receipt lacks matching Verified journal acceptance; automatic resend prohibited.");
+        return false;
     }
 
     public string SendReadyForInvoicingEmail(RunRow row, IEnumerable<DocumentInfo> documents)
     {
         if (ReadyEmailWasSent(row.OrderNumber)) return "ALREADY SENT";
-        var subject = ReadyEmailBuilder.Subject(row);
-        var model = new EmailsModel
-        {
-            Organization = options.OrganizationCode,
-            EmailSubject = subject,
-            HtmlText = ReadyEmailBuilder.Build(row, documents),
-            SaveAsUngerboeckDocument = new DocumentsModel { Order = row.OrderNumber }
-        };
+        var handoff = Journal?.Evidence.Handoff ?? throw new RecoveryReviewException("REVIEW: send requires verified final handoff state.");
+        var supplied = documents.ToList();
+        if (!supplied.Select(x => x.ContentHash).Order().SequenceEqual(handoff.Attachments.Select(x => x.ContentHash).Order()))
+            throw new RecoveryReviewException("REVIEW: incomplete or conflicting contract attachment set; email not sent.");
+        var emailRow = handoff.EmailRow();
+        var subject = ReadyEmailBuilder.Subject(emailRow);
+        var model = new EmailsModel { Organization = options.OrganizationCode, EmailSubject = subject,
+            HtmlText = ReadyEmailBuilder.Build(emailRow, handoff.Attachments), SaveAsUngerboeckDocument = new DocumentsModel { Order = handoff.OrderNumber } };
+        if (!BillingRules.ValidEmail(row.ReadyEmailRecipient)) throw new RecoveryReviewException("REVIEW: invalid handoff recipient.");
         model.SendToAddresses.Add(new EmailAccountModel { EmailAddress = row.ReadyEmailRecipient });
-        foreach (var document in documents)
+        foreach (var document in handoff.Attachments)
         {
-            var attachmentName = SafeAttachmentName(document.Description, document.SequenceNumber);
-            model.Attachments.Add(new AttachmentModel
-            {
-                Description = attachmentName,
-                FileName = document.DocumentId.Length > 0 ? document.DocumentId : $"Contract-{document.SequenceNumber}.pdf",
-                FileData = Convert.ToBase64String(DownloadDocument(document))
-            });
+            model.Attachments.Add(new AttachmentModel { Description = SafeAttachmentName(document.Description, document.SequenceNumber),
+                FileName = SafeAttachmentName(document.DocumentId, document.SequenceNumber) + ".pdf", FileData = Convert.ToBase64String(VerifiedDocumentData(document)) });
         }
-        if (model.Attachments.Count == 0) throw new InvalidOperationException("Ready-for-invoicing email was not sent because no Contract PDFs were available.");
         CallWrite("Send ready email", $"org={options.OrganizationCode}; order={row.OrderNumber}; recipient={row.ReadyEmailRecipient}; subject={subject}", model, write => client.Endpoints.Emails.Send(write),
             new() { ["order"] = row.OrderNumber.ToString(CultureInfo.InvariantCulture), ["baseline"] = string.Join(",", GetSavedEmails(row.OrderNumber).Select(x => x.SequenceNumber)),
                 ["bodyHash"] = OrderIdentity.Hash(model.HtmlText), ["attachmentHashes"] = string.Join(",", model.Attachments.Select(x => BytesHash(Convert.FromBase64String(x.FileData)))) });
@@ -528,6 +546,11 @@ internal sealed class MomentusGateway
         if (journal.Evidence.Stages.Any(x => x.Status is StageStatus.Dispatching or StageStatus.Unknown or StageStatus.Succeeded))
             throw new RecoveryReviewException("REVIEW: a prior dispatched stage is unresolved; no new mutation can be dispatched before reconciliation and durable verification.");
         // Persist only intended mutable values; full SDK responses can change on readback.
+        if (operation == "Activate order")
+        {
+            if (journal.Evidence.Handoff is null || journal.Evidence.Plan.ApprovalNeeded) throw new RecoveryReviewException("REVIEW: activation requires a verified final handoff without Approval Needed.");
+            HandoffRules.RequireOrderStages(journal.Evidence, includeActivation: false);
+        }
         if (MutationGuard is not null) intent = (T)MutationGuard(operation, intent!);
         var stage = journal.Prepare(operation, target, SerializeIntent(operation, intent), source);
         if (stage.Status == StageStatus.Verified) return JsonConvert.DeserializeObject<T>(stage.Result)!;
@@ -589,7 +612,8 @@ internal sealed class MomentusGateway
             "Activate exhibitor" when value is ExhibitorsModel e => new { e.ExhibitorID, e.ExhibitorStatus },
             "Copy contract document" when value is DocumentsModel d => new { d.Type, d.NewFileName, d.Description, d.Category, d.Order, d.Event, d.Function, d.Account },
             "Add payment schedule note" or "Update payment schedule note" when value is NotesModel n => new { n.OrganizationCode, n.Type, n.OrderNumber, n.SequenceNumber, n.Class, n.Title, n.Text },
-            "Send ready email" when value is EmailsModel e => new { e.Organization, e.EmailSubject, e.HtmlText, e.SendToAddresses, e.SaveAsUngerboeckDocument },
+            "Send ready email" when value is EmailsModel e => new { e.Organization, e.EmailSubject, e.HtmlText, e.SendToAddresses, SaveOrder = e.SaveAsUngerboeckDocument?.Order,
+                AttachmentManifest = e.Attachments.Select(a => new { a.FileName, a.Description, Hash = BytesHash(Convert.FromBase64String(a.FileData)) }).ToArray() },
             _ => throw new InvalidOperationException($"No durable intent defined for {operation}.")
         };
         return JsonConvert.SerializeObject(fields);
@@ -747,7 +771,13 @@ internal sealed class MomentusGateway
                 var baseline = stage.Source["baseline"].Split(',').ToHashSet();
                 var matches = GetSavedEmails(int.Parse(stage.Source["order"], CultureInfo.InvariantCulture))
                     .Where(x => !baseline.Contains(Clean(x.SequenceNumber)) && TextRules.Same(x.Description, intended.EmailSubject)).ToList();
-                if (stage.Result.Length == 0 || matches.Count != 1) return false;
+                var accepted = JsonConvert.DeserializeObject<EmailsModel>(stage.Result);
+                if (accepted is null || matches.Count != 1 || (Newtonsoft.Json.Linq.JObject.Parse(stage.Intent)["AttachmentManifest"] is not null
+                        ? SerializeIntent("Send ready email", accepted) != stage.Intent
+                        : JsonConvert.SerializeObject(new { accepted.Organization, accepted.EmailSubject, accepted.HtmlText, accepted.SendToAddresses, accepted.SaveAsUngerboeckDocument }) != stage.Intent) ||
+                    matches[0].Order != int.Parse(stage.Source["order"], CultureInfo.InvariantCulture) ||
+                    OrderIdentity.Hash(accepted.HtmlText ?? "") != stage.Source["bodyHash"] ||
+                    string.Join(",", accepted.Attachments.Select(a => BytesHash(Convert.FromBase64String(a.FileData)))) != stage.Source["attachmentHashes"]) return false;
                 stage.Source["savedEmailSequence"] = Clean(matches[0].SequenceNumber);
                 verified = JsonConvert.DeserializeObject<EmailsModel>(stage.Result);
                 break;
