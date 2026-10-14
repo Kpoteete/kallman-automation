@@ -4,9 +4,9 @@
 
 The Windows task `Kallman Momentus Service Order Entry` polls all events every 15 minutes. Live mode enters eligible ME/35/PC orders and sends ready-for-invoicing emails to MiranaC@kallman.com and LindsayH@kallman.com, with kylep@kallman.com in CC. The email begins with the early-development notice. Verified service orders become Active (A); exhibitors become Active (2) after all scoped pending orders and unfinished journaled work resolve. Hold, Approval Needed, billing/contract validation and uncertain-write safeguards still apply. A review is not permission to repeat an email or guess missing data.
 
-Older journals with recorded mutation stages retain their original recipients and activation options. Different activation options require REVIEW before any additional write. A placeholder with no mutation stages can use the freshly evaluated current policy. Already accepted emails are never resent merely because recipients or the notice changed. Preserve all state when updating the task to a new release.
+Each invocation evaluates current Momentus data and writes evidence into a unique `state\runs\<run-id>` folder. Older journals are retained as audit history and are not loaded as planning or recovery inputs. Within the current invocation, an unknown write outcome stops later writes for that order. Preserve all state when updating the task to a new release.
 
-The ten-order allowance counts orders that dispatch a write, once per order. Completed PC orders and unresolved read-only recovery do not consume it. Confirmed rejected or uncertain dispatched writes do. Repeated polling reuses verified journals instead of repeating mutations. Deferred planned stages remain recoverable.
+The ten-order allowance counts orders that dispatch a write, once per order. Confirmed rejected or uncertain dispatched writes consume it. Every poll reevaluates current records, reusing existing fields, contract copies and managed notes when current verification supports them. Incomplete orders remain PC and exhibitors remain 35; independent verified components may still be saved. They receive no Finance completion email. An apply run with exceptions sends one summary to Kyle, so an unresolved issue can appear in a summary on each 15-minute poll.
 
 The runner uses a bounded `--max-results 1000000` ceiling. The former 100000 ceiling was exceeded by a real global contact decision search. Raising the configured ceiling does not accept partial searches or authorize any billing decision; searches that still exceed it fail closed. No live recheck of that contact search has been claimed by this scheduling change.
 
@@ -36,7 +36,7 @@ The build tests the project and creates a new immutable, self-contained win-x64 
 
 Keep credentials only in these **machine environment variables** on that computer: `MOMENTUS_APIUSER`, `MOMENTUS_SECRET`, `MOMENTUS_KEY`. The runner refreshes them into its own process without printing or writing their values. A credential's presence is not proof of successful Momentus authentication; the first API run supplies that evidence.
 
-When moving this automation between computers, preserve its canonical journal folder separately: `%ProgramData%\Kallman\ServiceOrderEntry\state`. Stop competing runs before taking/copying a consistent state snapshot. Do not overwrite existing target journals, clear unknown stages, or infer completed processing from CSVs alone. If journals are not migrated, existing saved emails can require REVIEW rather than being resent. The release package and installer never migrate or delete journals automatically.
+When moving this automation between computers, preserve its canonical journal folder separately: `%ProgramData%\Kallman\ServiceOrderEntry\state`. Stop competing runs before taking/copying a consistent state snapshot. Do not overwrite existing target journals, clear unknown stages, or infer completed processing from CSVs alone. Old journals remain audit evidence; copying them does not make the current-data workflow replay prior runs. Use only one executing computer for live polling: the run lock is machine-local. The release package and installer never migrate or delete journals automatically.
 
 Open PowerShell **as Administrator on the executing computer**, change to the permanent package folder, and run:
 
@@ -46,7 +46,7 @@ Open PowerShell **as Administrator on the executing computer**, change to the pe
 
 Omit `-EnableLiveUpdates` for scheduled preview. `-ValidateOnly` validates package, machine credential presence and proposed task settings without installing or contacting Momentus. An existing task is not replaced unless `-ReplaceExistingTask` is explicitly supplied; replacement preserves a dated XML backup under `%ProgramData%\Kallman\ServiceOrderEntry\task-backups` and refuses while the existing task is running.
 
-Before enabling the recurring task, the installer registers and runs a temporary local-only SYSTEM probe. It verifies configuration, lookups, existing journal validity, credentials present, runtime startup, core lock and durable state/report storage. It makes no Momentus requests. Its task is removed after verification; its logs are preserved. The recurring task's first run begins approximately two minutes after installation.
+Before enabling the recurring task, the installer registers and runs a temporary local-only SYSTEM probe. It verifies configuration, lookups, credentials present, runtime startup, core lock and durable state/report storage. It does not load or validate historical journals and makes no Momentus requests. Its task is removed after verification; its logs are preserved. The recurring task's first run begins approximately two minutes after installation.
 
 ## Task settings and verification
 
@@ -71,7 +71,8 @@ The verifier checks the registered XML interval, duration, SYSTEM principal, ove
 Logs: `%ProgramData%\Kallman\ServiceOrderEntry\operations\logs\scheduled-*.log`.
 CSV reports: `%ProgramData%\Kallman\ServiceOrderEntry\operations\runs\`.
 Latest launcher summary: `%ProgramData%\Kallman\ServiceOrderEntry\operations\last-run.json`.
-Recovery authority: `%ProgramData%\Kallman\ServiceOrderEntry\state\orders\`.
+Current-run write evidence: `%ProgramData%\Kallman\ServiceOrderEntry\state\runs\<run-id>\orders\`.
+Older `state\orders` and run folders: preserved audit history.
 
 Verify the first actual run's completed scheduler result, log, CSV and canonical journals before calling the deployment operational. A successful local probe alone is insufficient. The setup does not send extra failure notifications or install an external monitor.
 

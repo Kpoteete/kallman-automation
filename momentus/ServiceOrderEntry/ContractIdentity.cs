@@ -4,11 +4,18 @@ namespace ServiceOrderEntry;
 
 internal sealed record ContractSnapshot(string Organization, string Owner, int OwnerId, DocumentInfo Document, string ContentHash, string PaymentSchedule);
 internal sealed record ContractSelection(IReadOnlyList<ContractSnapshot> Sources, IReadOnlyList<ContractSnapshot> OrderDocuments,
-    ContractSnapshot? ScheduleSource, string PaymentSchedule, bool NearbyFallback, string ReviewMessage);
+    ContractSnapshot? ScheduleSource, string PaymentSchedule, bool NearbyFallback, string ReviewMessage)
+{
+    public bool MissingPaymentSchedule => ScheduleSource is null && PaymentSchedule == ContractRules.MissingPaymentPlan &&
+        Sources.Concat(OrderDocuments).All(x => x.PaymentSchedule.Length == 0);
+    public bool HasResolvedSchedule => ReviewMessage.Length == 0 && (ScheduleSource is not null || MissingPaymentSchedule);
+}
 internal sealed record ContractCopyIdentity(ContractSnapshot Source, DocumentInfo Destination, string DestinationHash);
 
 internal static class ContractRules
 {
+    public const string MissingPaymentPlan = "no payment plan found by automations - refer to contract.";
+
     public static ContractSelection Select(IEnumerable<ContractSnapshot> source, IEnumerable<ContractSnapshot> destination, bool fallback = false)
     {
         var sources = Ordered(source).ToList();
@@ -17,9 +24,9 @@ internal static class ContractRules
         var schedules = applicable.Where(x => x.PaymentSchedule.Length > 0).ToList();
         var distinct = schedules.Select(x => PaymentScheduleExtractor.NormalizeForComparison(x.PaymentSchedule)).Distinct(StringComparer.Ordinal).ToList();
         if (distinct.Count > 1) return new(sources, destinations, null, "", fallback, "Applicable contracts contain conflicting payment schedules; REVIEW.");
-        if (distinct.Count == 0) return new(sources, destinations, null, "", fallback, "No complete Payment Schedule was found in the applicable contracts.");
         if (destinations.GroupBy(x => x.ContentHash).Any(x => x.Count() > 1))
             return new(sources, destinations, null, "", fallback, "Multiple indistinguishable order contract copies require REVIEW.");
+        if (distinct.Count == 0) return new(sources, destinations, null, MissingPaymentPlan, fallback, "");
         var selected = Ordered(schedules).First(); // All schedules were proven equivalent; stable ordering only chooses their audit identity.
         return new(sources, destinations, selected, selected.PaymentSchedule, fallback, "");
     }
@@ -36,7 +43,7 @@ internal static class ManagedNoteRules
 {
     public const string Title = "Payment Schedule [KWI ServiceOrderEntry]";
     public static string ContentHash(string? text) => OrderIdentity.Hash(PaymentScheduleExtractor.NormalizeForComparison(text));
-    public static ManagedNoteDecision Resolve(IReadOnlyList<NotesModel> notes, IEnumerable<StageEvidence>? stages = null)
+    public static ManagedNoteDecision Resolve(IReadOnlyList<NotesModel> notes, IEnumerable<StageEvidence>? stages = null, string? expectedText = null)
     {
         var proofs = (stages ?? []).Where(x => x.Status == StageStatus.Verified && x.Operation is "Add payment schedule note" or "Update payment schedule note")
             .Select(x => Newtonsoft.Json.JsonConvert.DeserializeObject<NotesModel>(x.Result)).Where(x => x is not null).ToList();
@@ -55,7 +62,15 @@ internal static class ManagedNoteRules
             return new("OWNED", note, "");
         }
         if (notes.Any(x => TextRules.Same(x.Title, "Payment Schedule")))
-            return new("REVIEW", null, "Unjournaled legacy Payment Schedule note requires ownership review; it is preserved.");
+        {
+            if (expectedText is null)
+                return new("REVIEW", null, "Unjournaled legacy Payment Schedule note requires ownership review; it is preserved.");
+            var currentMatches = notes.Where(x => TextRules.Same(x.Title, "Payment Schedule") && ContentHash(Text(x)) == ContentHash(expectedText)).ToList();
+            if (currentMatches.Count > 1) return new("REVIEW", null, "Multiple current payment notes match the contract; a unique note cannot be selected.");
+            if (currentMatches.Count == 1) return new("CURRENT MATCH", currentMatches[0], "");
+            // Preserve unrelated/older manual notes and create a uniquely marked
+            // note for the current contract terms; do not take ownership of them.
+        }
         return new("ADD", null, "");
     }
     public static string Text(NotesModel note) => string.IsNullOrWhiteSpace(note.PlainText) ? note.Text ?? "" : note.PlainText;

@@ -60,7 +60,8 @@ public sealed class ProductionAuditTests
         Assert.Equal(3, runner.ProcessCandidates(s.Gateway, [new(s.Transport.Order, s.Transport.Exhibitor), new(s.Transport.OtherOrders[0], s.Transport.Exhibitor)], [], [new("Turnkey", 28, ["Turnkey"])]));
         Assert.Equal("UNKNOWN", s.Store.Load().Single(x => x.Identity.Order == 3).Plan.Outcome);
         Assert.True(s.Store.Load().Single(x => x.Identity.Order == 4).OrderComplete);
-        Assert.Single(s.Transport.Emails);
+        Assert.Single(s.Transport.Emails, x => x.EmailSubject.StartsWith("Ready for invoicing"));
+        Assert.Single(s.Transport.Emails, x => x.EmailSubject.StartsWith("Service Order Entry — attention needed"));
     }
 
     [Fact] public void ConfirmedTenantZeroStatusCodeIsWrittenAndVerifiedForNewBillingAccount()
@@ -125,7 +126,7 @@ public sealed class ProductionAuditTests
             { changed = true; if (added == "PC") s.Transport.OtherOrders.Add(Other()); else s.Transport.Exhibitor.ExhibitorCategory = "1," + added; }
         };
         s.Apply(); Assert.True(changed); if (added != "PC") Assert.Contains(added, s.Transport.Exhibitor.ExhibitorCategory);
-        if (added != "77") { Assert.Equal(35, s.Transport.Exhibitor.ExhibitorStatus); Assert.DoesNotContain("Activate exhibitor", s.Transport.Mutations); }
+        if (added is "103" or "PC") { Assert.Equal(35, s.Transport.Exhibitor.ExhibitorStatus); Assert.DoesNotContain("Activate exhibitor", s.Transport.Mutations); }
         else Assert.Equal(2, s.Transport.Exhibitor.ExhibitorStatus);
     }
 
@@ -149,7 +150,7 @@ public sealed class ProductionAuditTests
         if (field == "billing") s.Transport.Order.BillToAccount = "OTHER";
         if (field == "note") s.Transport.Notes.Single().PlainText = "changed payment terms";
         if (field == "attachment") s.Transport.Copies.Clear();
-        if (field == "items") s.Transport.Items[0].Units = 7;
+        if (field == "items") s.Transport.Items[0].Description = "Space Only Package";
         if (field == "selector") s.Transport.BillingInstructions = s.Row.RequestedBilling with { UseRequestedAddress = "ECA" };
         if (field == "exhibitor type") s.Transport.Exhibitor.ExhibitorType = "SE";
         if (field == "salesrep") s.Transport.Exhibitor.Salesperson = "OTHER";

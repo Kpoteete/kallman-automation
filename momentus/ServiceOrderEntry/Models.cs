@@ -10,7 +10,11 @@ internal sealed record DocumentInfo(string Type, int SequenceNumber, string Docu
 }
 internal sealed record OrderItemInfo(int LineNumber, string ResourceCode, string Description, string AlternateDescription)
 {
+    public decimal? UnitCharge { get; init; }
     public string EvidenceHash { get; init; } = "";
+    public string DecisionHash { get; init; } = "";
+    [System.Text.Json.Serialization.JsonIgnore, Newtonsoft.Json.JsonIgnore]
+    public string OriginalEntryMetadataHash { get; init; } = "";
     public string SearchText => string.Join(" | ", new[] { Description, AlternateDescription, ResourceCode }.Where(x => !string.IsNullOrWhiteSpace(x)));
     public string Identifier => !string.IsNullOrWhiteSpace(Description) ? Description.Trim() : (!string.IsNullOrWhiteSpace(AlternateDescription) ? AlternateDescription.Trim() : ResourceCode.Trim());
 }
@@ -47,6 +51,17 @@ internal sealed record AccountInfo(
 
 internal sealed class RunRow
 {
+    public bool ComponentEvaluation { get; set; }
+    public bool RepResolved { get; set; }
+    public bool CategoryResolved { get; set; }
+    public bool BoothResolved { get; set; }
+    public bool BillingResolved { get; set; }
+    public bool ContractsResolved { get; set; }
+    public bool NoteResolved { get; set; }
+    public List<ProcessingIssue> Issues { get; set; } = [];
+    public List<ProcessingIssue> ManualCorrections { get; set; } = [];
+    public List<string> PartialWork { get; set; } = [];
+    public List<SalesRepLookup> PartialSalesReps { get; set; } = [];
     public string Outcome { get; set; } = "";
     public bool ExhibitorActivationPending { get; set; }
     public DecisionInputs? DecisionInputs { get; set; }
@@ -67,6 +82,7 @@ internal sealed class RunRow
     public DateTime? OrderDate { get; set; }
     public string ExhibitorSalesRep { get; set; } = "";
     public string ProposedOrderAccountRep { get; set; } = "";
+    public string OrderAccountRepEmail { get; set; } = "";
     public string ServiceOrderItemIdentifier { get; set; } = "";
     public int? ProposedCategory { get; set; }
     public string ProposedCategoryName { get; set; } = "";
@@ -136,6 +152,12 @@ internal sealed class RunRow
         EffectiveBilling?.Account.Company ?? "", EffectiveBilling?.Contact.FirstName ?? "", EffectiveBilling?.Contact.LastName ?? "",
         EffectiveBilling?.Contact.Email ?? "", EffectiveBilling?.AccountSource ?? "", EffectiveBilling?.ContactSource ?? "",
         EffectiveBilling?.AboveAddress == true ? "YES" : "NO", AccountMatchKind.ToString(), Outcome, ExhibitorActivationPending ? "YES" : "NO",
-        ReadyEmailCcRecipient
+        ReadyEmailCcRecipient, string.Join(" | ", Issues.Select(x => x.Description)), string.Join(" | ", PartialWork),
+        string.Join(" | ", ManualCorrections.Select(x => x.Description))
     ];
+}
+
+internal sealed record ProcessingIssue(string Component, string Reason, string Values, bool Failed = false)
+{
+    public string Description => $"{Component}: {Reason} Values: {Values}";
 }

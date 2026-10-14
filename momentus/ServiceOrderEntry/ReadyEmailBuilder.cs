@@ -10,6 +10,22 @@ internal static class ReadyEmailBuilder
     public const string FinanceCcRecipient = "kylep@kallman.com";
     public const string DevelopmentNotice = "This service order automation is in the early stages of development. There may be bugs or small mistakes. Please review the order details before invoicing.";
 
+    public static string FinanceCcWithEmployee(string email)
+    {
+        if (!BillingRules.ValidEmail(email)) throw new RecoveryReviewException("REVIEW: employee email is missing or invalid.");
+        var to = Parse(FinanceRecipients, required: true);
+        return string.Join("; ", new[] { FinanceCcRecipient, email.Trim() }
+            .Distinct(StringComparer.OrdinalIgnoreCase).Where(x => !to.Contains(x, StringComparer.OrdinalIgnoreCase)));
+    }
+
+    public static void VerifyEmployeeRecipient(MomentusGateway gateway, RunRow row)
+    {
+        var recipients = Recipients(row);
+        var email = gateway.GetOrderAccountRepEmail(row.ProposedOrderAccountRep);
+        if (!TextRules.Same(email, row.OrderAccountRepEmail) || !recipients.To.Concat(recipients.Cc).Contains(email, StringComparer.OrdinalIgnoreCase))
+            throw new RecoveryReviewException("REVIEW: order account rep email changed or is missing from the planned handoff recipients.");
+    }
+
     public static (IReadOnlyList<string> To, IReadOnlyList<string> Cc) Recipients(RunRow row)
     {
         var to = Parse(row.ReadyEmailRecipient, required: true);
@@ -60,9 +76,22 @@ internal static class ReadyEmailBuilder
         AddRow(html, "Bill-To account", $"{billToCompany} ({row.FinalBillToAccount})");
         AddRow(html, "Bill-To contact", $"{contactName} ({row.FinalBillToContact})");
         AddRow(html, "Email", contactEmail);
-        AddRow(html, "Address", row.FinalAddress);
-        AddRow(html, "City / State / Postal", string.Join(", ", new[] { row.FinalCity, row.FinalState, row.FinalPostalCode }.Where(x => !string.IsNullOrWhiteSpace(x))));
-        AddRow(html, "Country", row.FinalCountry);
+        var labels = row.EffectiveBilling?.KoreanAddressLabels;
+        if (labels is not null)
+        {
+            labels.Verify(account);
+            AddRow(html, "Address", labels.StreetAddress);
+            if (labels.District.Length > 0) AddRow(html, "District", labels.District);
+            AddRow(html, "City / Region", labels.CityRegion);
+            AddRow(html, "Postal code", row.FinalPostalCode);
+            AddRow(html, "Country", "South Korea");
+        }
+        else
+        {
+            AddRow(html, "Address", row.FinalAddress);
+            AddRow(html, "City / State / Postal", string.Join(", ", new[] { row.FinalCity, row.FinalState, row.FinalPostalCode }.Where(x => !string.IsNullOrWhiteSpace(x))));
+            AddRow(html, "Country", TextRules.Same(row.FinalCountry, "KOR") ? "South Korea" : row.FinalCountry);
+        }
         html.Append("</table>");
 
         html.Append("<p><strong>Payment Schedule</strong><br>");

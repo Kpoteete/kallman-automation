@@ -32,8 +32,25 @@ public sealed class ContractIdentityTests
     }
     [Fact] public void MultipleIndistinguishableOrderContractsRequireReview() => Assert.Contains("indistinguishable",
         ContractRules.Select([], [Contract(1, "terms", owner: "Order"), Contract(2, "terms", owner: "Order")]).ReviewMessage);
-    [Fact] public void ConflictingSchedulesWithinOneDocumentRequireReview() => Assert.Throws<RecoveryReviewException>(() =>
-        PaymentScheduleExtractor.FromPdf(RetryBoundaryTests.MakePdf(RetryBoundaryTests.TestSchedule + "\n" + RetryBoundaryTests.TestSchedule.Replace("50%", "100%"))));
+    [Theory] [InlineData(false)] [InlineData(true)]
+    public void FirstScheduleInPdfWinsEvenWhenLaterScheduleDiffers(bool reverse)
+    {
+        var original = RetryBoundaryTests.TestSchedule;
+        var other = original.Replace("50%", "100%", StringComparison.Ordinal);
+        var first = reverse ? other : original;
+        var later = reverse ? original : other;
+        var result = PaymentScheduleExtractor.FromPdf(RetryBoundaryTests.MakePdf(first + "\n" + later));
+        Assert.Equal(PaymentScheduleExtractor.NormalizeForComparison(first), PaymentScheduleExtractor.NormalizeForComparison(result));
+    }
+
+    [Fact]
+    public void LaterPaymentScheduleAndPricesClauseDoesNotReplaceFirstSummary()
+    {
+        const string summary = "Payment Schedule\nStandard Payment Schedule\n50% Deposit: Due upon receipt of invoice\n50% Final Balance: Due 180 days before show start date\nLate Booking Schedule\nApplies to bookings made within 180 days of the show start date.\n100% Full Payment: Due upon receipt of invoice\nNote: Please refer to your specific contract and invoice for final payment terms and due dates.";
+        const string clause = "Payment Schedule and Prices: A schedule of prices for space is outlined in the contract. Under the Standard Payment Schedule, a 50% deposit is due upon receipt of invoice. The remaining 50% is due 180 days prior to the show. Late bookings require 100%. Please refer to your specific contract and invoice for final payment terms and due dates.";
+        Assert.Equal(PaymentScheduleExtractor.NormalizeForComparison(summary),
+            PaymentScheduleExtractor.NormalizeForComparison(PaymentScheduleExtractor.FromPdf(RetryBoundaryTests.MakePdf(summary + "\n" + clause))));
+    }
     [Fact] public void ConflictingApplicablePdfCandidatesRequireReview()
     {
         using var s = new RetryBoundaryTests.Scenario();
@@ -51,13 +68,15 @@ public sealed class ContractIdentityTests
     {
         using var s = new RetryBoundaryTests.Scenario(); s.Transport.DocumentData["C/11"] = RetryBoundaryTests.MakePdf("Other contract text");
         var result = s.Gateway.ResolveContracts(2, 3, DateTime.Today);
-        Assert.False(result.NearbyFallback); Assert.Contains("No complete", result.ReviewMessage);
+        Assert.False(result.NearbyFallback); Assert.True(result.MissingPaymentSchedule); Assert.True(result.HasResolvedSchedule);
+        Assert.Equal(ContractRules.MissingPaymentPlan, result.PaymentSchedule); Assert.Empty(result.ReviewMessage);
     }
-    [Fact] public void EmptyFallbackIsReviewInsteadOfIndexFailure()
+    [Fact] public void EmptyFallbackUsesMissingPaymentPlanInsteadOfIndexFailure()
     {
         using var s = new RetryBoundaryTests.Scenario(); s.Transport.Contracts.Clear();
         var result = s.Gateway.ResolveContracts(2, 3, DateTime.Today);
-        Assert.True(result.NearbyFallback); Assert.Null(result.ScheduleSource); Assert.NotEmpty(result.ReviewMessage);
+        Assert.True(result.NearbyFallback); Assert.Null(result.ScheduleSource); Assert.Empty(result.ReviewMessage);
+        Assert.True(result.MissingPaymentSchedule); Assert.Equal(ContractRules.MissingPaymentPlan, result.PaymentSchedule);
     }
     [Fact] public void RevisedSourceWithUnchangedDescriptionBlocksCopy()
     {
@@ -128,11 +147,13 @@ public sealed class ContractIdentityTests
         using var s = new RetryBoundaryTests.Scenario(); s.Transport.Notes.AddRange([Note(1, ManagedNoteRules.Title, "a"), Note(2, ManagedNoteRules.Title, "b")]);
         Assert.Throws<RecoveryReviewException>(() => s.Gateway.SavePaymentScheduleNote(3, s.Row.PaymentScheduleText)); Assert.Empty(s.Transport.Mutations);
     }
-    [Fact] public void LegacyTitleWithoutJournalOwnershipIsPreservedForReview()
+    [Fact] public void UnmatchedLegacyManualNoteIsPreservedWhileCurrentManagedNoteIsAdded()
     {
         using var s = new RetryBoundaryTests.Scenario(); s.Transport.Notes.Add(Note(9, "Payment Schedule", "legacy terms"));
-        Assert.Throws<RecoveryReviewException>(() => s.Gateway.SavePaymentScheduleNote(3, s.Row.PaymentScheduleText)); Assert.Empty(s.Transport.Mutations);
-        Assert.Equal("legacy terms", Assert.Single(s.Transport.Notes).PlainText);
+        Assert.Equal("ADDED", s.Gateway.SavePaymentScheduleNote(3, s.Row.PaymentScheduleText));
+        Assert.Equal("legacy terms", s.Transport.Notes.Single(x => x.SequenceNumber == 9).PlainText);
+        Assert.Equal(2, s.Transport.Notes.Count);
+        Assert.Single(s.Transport.Notes, x => x.Title == ManagedNoteRules.Title);
     }
     [Fact] public void VerifiedUnchangedLegacyNoteMayMigrateOnlyByStableId()
     {

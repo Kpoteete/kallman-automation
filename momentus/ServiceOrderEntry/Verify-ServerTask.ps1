@@ -1,5 +1,9 @@
 [CmdletBinding()]
-param([string]$TaskName = 'Kallman Momentus Service Order Entry')
+param(
+    [string]$TaskName = 'Kallman Momentus Service Order Entry',
+    [string]$ReleaseFolder = $PSScriptRoot,
+    [switch]$AllowDisabled
+)
 $ErrorActionPreference = 'Stop'
 $task = Get-ScheduledTask -TaskName $TaskName -TaskPath '\'
 $info = Get-ScheduledTaskInfo -TaskName $TaskName -TaskPath '\'
@@ -16,11 +20,20 @@ $enabled = Read-TaskValue '//t:Settings/t:Enabled'
 $endBoundary = Read-TaskValue '//t:TimeTrigger/t:EndBoundary'
 $arguments = Read-TaskValue '//t:Actions/t:Exec/t:Arguments'
 $command = Read-TaskValue '//t:Actions/t:Exec/t:Command'
-$expectedRunner = Join-Path $PSScriptRoot 'Run-Scheduled.ps1'
-if ($interval -ne 'PT15M' -or $duration -or $endBoundary -or $overlap -ne 'IgnoreNew' -or $limit -ne 'PT0S' -or $hardTerminate -ne 'false' -or $enabled -ne 'true') { throw 'Scheduled task interval, overlap or time-limit settings do not match the required setup.' }
+$expectedRunner = Join-Path $ReleaseFolder 'Run-Scheduled.ps1'
+$mismatches = @(
+    if ($interval -ne 'PT15M') { "Interval=[$interval], expected [PT15M]" }
+    if ($duration) { "Repetition duration=[$duration], expected no duration" }
+    if ($endBoundary) { "End boundary=[$endBoundary], expected no end boundary" }
+    if ($overlap -ne 'IgnoreNew') { "Overlap=[$overlap], expected [IgnoreNew]" }
+    if ($limit -ne 'PT0S') { "Execution time limit=[$limit], expected [PT0S]" }
+    if ($hardTerminate -ne 'false') { "AllowHardTerminate=[$hardTerminate], expected [false]" }
+    if ($enabled -ne 'true' -and -not ($AllowDisabled -and $enabled -eq 'false')) { "Enabled=[$enabled], expected [true]" }
+)
+if ($mismatches.Count) { throw ('Scheduled task settings mismatch: ' + ($mismatches -join '; ')) }
 if ($arguments.IndexOf('"' + $expectedRunner + '"', [StringComparison]::OrdinalIgnoreCase) -lt 0 -or $command -ne (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')) { throw 'Task action does not point to this published package.' }
 $principalId = Read-TaskValue '//t:Principals/t:Principal/t:UserId'
 if ($principalId -notin @('S-1-5-18','SYSTEM')) { throw 'Task principal is not SYSTEM.' }
 $hexResult = '0x{0:X8}' -f $info.LastTaskResult
-$result = if ($task.State -eq 'Running' -or $info.LastTaskResult -eq 267009) { 'RUNNING - not yet verified' } elseif ($info.LastRunTime.Year -lt 2000) { 'NOT RUN YET' } else { switch ($info.LastTaskResult) { 0 { 'SUCCESS' } 2 { 'REVIEW / DEFERRED' } 3 { 'UNKNOWN WRITE OUTCOME' } default { 'FAILED' } } }
-[pscustomobject]@{ Task=$TaskName; State=$task.State; Mode=$(if ($arguments -match '(?:^|\s)-Apply(?:\s|$)') { 'LIVE' } else { 'PREVIEW' }); Interval=$interval; Principal=$principalId; Overlap=$overlap; LastRun=$info.LastRunTime; NextRun=$info.NextRunTime; LastTaskResult=$hexResult; Outcome=$result; Runner=$expectedRunner; Summary=(Join-Path $env:ProgramData 'Kallman\ServiceOrderEntry\operations\last-run.json') } | Format-List
+$result = if ($task.State -eq 'Running' -or $info.LastTaskResult -eq 267009) { 'RUNNING - not yet verified' } elseif ($enabled -eq 'false') { 'DISABLED - not operational' } elseif ($info.LastRunTime.Year -lt 2000) { 'NOT RUN YET' } else { switch ($info.LastTaskResult) { 0 { 'SUCCESS' } 2 { 'REVIEW / DEFERRED' } 3 { 'UNKNOWN WRITE OUTCOME' } default { 'FAILED' } } }
+[pscustomobject]@{ Task=$TaskName; State=$task.State; Enabled=$enabled; Mode=$(if ($arguments -match '(?:^|\s)-Apply(?:\s|$)') { 'LIVE' } else { 'PREVIEW' }); Interval=$interval; Principal=$principalId; Overlap=$overlap; LastRun=$info.LastRunTime; NextRun=$info.NextRunTime; LastTaskResult=$hexResult; Outcome=$result; Runner=$expectedRunner; Summary=(Join-Path $env:ProgramData 'Kallman\ServiceOrderEntry\operations\last-run.json') } | Format-List

@@ -15,10 +15,10 @@ internal static partial class PaymentScheduleExtractor
     public static string FromText(string? text)
     {
         var normalized = NormalizeLigatures(text ?? "").Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
-        var schedules = SchedulePattern().Matches(normalized).Select(match => Format(match.Value)).ToList();
-        if (schedules.Select(NormalizeForComparison).Distinct(StringComparer.Ordinal).Count() > 1)
-            throw new RecoveryReviewException("REVIEW: one contract contains conflicting complete Payment Schedules.");
-        return schedules.FirstOrDefault() ?? "";
+        // Use the first complete schedule in document reading order, per the
+        // business rule. Later schedule passages in the same PDF do not override it.
+        var first = SchedulePattern().Match(normalized);
+        return first.Success ? Format(first.Value) : "";
     }
 
     private static string Format(string value)

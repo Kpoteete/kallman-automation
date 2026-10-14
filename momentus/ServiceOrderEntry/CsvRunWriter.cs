@@ -8,7 +8,7 @@ internal static class CsvRunWriter
     [
         "EventID", "ExhibitorID", "Order Number", "Exhibitor Name", "Order Date", "Sales Rep from Exhibitor Record", "OrderAccountRep value to enter on Service Order",
         "Service Order Item Identifier", "Service Order Category to Apply", "Service Order Category Name",
-        "Existing Exhibitor Categories", "Exhibitor Categories to Add", "Exhibitor Categories to Remove", "Final Exhibitor Categories", "Approval Needed Blocks Activation",
+        "Existing Exhibitor Categories", "Exhibitor Categories to Add", "Exhibitor Categories to Remove", "Final Exhibitor Categories", "Approval Needed Email Warning",
         "Contract PDFs on Exhibitor", "Contract PDF Copies Needed", "Contract PDF Copy Status",
         "Payment Schedule Text", "SON Note Action", "SON Note Status", "Ready Email Recipient", "Ready Email Status",
         "Order Status Action", "Exhibitor Status Action",
@@ -22,7 +22,7 @@ internal static class CsvRunWriter
         "Final Bill-To State", "Final Bill-To Postal Code", "Final Bill-To Country", "Booth Number to Apply", "Validation Status", "Validation Message",
         "Service Order Update Status", "Update/Error Message", "Run ID", "Processing ID", "Journal Stages",
         "Effective Bill-To Company", "Effective Contact First Name", "Effective Contact Last Name", "Effective Contact Email",
-        "Effective Account Source", "Effective Contact Source", "Above Address Retained", "Account Match Kind", "Outcome", "Exhibitor Activation Pending", "Ready Email CC Recipient"
+        "Effective Account Source", "Effective Contact Source", "Above Address Retained", "Account Match Kind", "Outcome", "Exhibitor Activation Pending", "Ready Email CC Recipient", "Unfinished Work and Values", "Verified Partial Work", "Manual Corrections (Order Continues)"
     ];
 
     public static void Preflight(string folder)

@@ -35,8 +35,15 @@ internal sealed record BillingConfiguration
             throw new InvalidDataException("Use Above Address/ECA/No/N/blank cannot be configured as separate Bill-To.");
     }
 
-    public string Selector(BillingRequest request) => RequiredAboveSelectors.Concat(AboveSelectors).Any(x => TextRules.Same(x, request.UseRequestedAddress)) ? "ABOVE" :
-        SeparateSelectors.Any(x => TextRules.Same(x, request.UseRequestedAddress)) ? "SEPARATE" : "UNKNOWN";
+    public string Selector(BillingRequest request)
+    {
+        if (RequiredAboveSelectors.Concat(AboveSelectors).Any(x => TextRules.Same(x, request.UseRequestedAddress))) return "ABOVE";
+        if (!SeparateSelectors.Any(x => TextRules.Same(x, request.UseRequestedAddress))) return "UNKNOWN";
+        // A selected Below Address with no address entered uses the existing above identity.
+        // Keep the submitted selector intact for audit and changed-input checks.
+        return new[] { request.Address, request.City, request.State, request.PostalCode, request.Country }
+            .All(string.IsNullOrWhiteSpace) ? "ABOVE" : "SEPARATE";
+    }
 
     public bool SameAs(BillingConfiguration other) => Header == other.Header && Class == other.Class && Type == other.Type &&
         EventSalesNotApplicableCode == other.EventSalesNotApplicableCode && AboveSelectors.SequenceEqual(other.AboveSelectors) && SeparateSelectors.SequenceEqual(other.SeparateSelectors);
@@ -47,7 +54,7 @@ internal sealed record AccountMatch(AccountMatchKind Kind, AccountInfo? Account,
 
 internal static class AccountIdentityRules
 {
-    public static AccountMatch Resolve(IReadOnlyList<AccountInfo> candidates, BillingRequest request)
+    public static AccountMatch Resolve(IReadOnlyList<AccountInfo> candidates, BillingRequest request, Func<AccountInfo, BillingRequest, bool>? addressMatches = null)
     {
         if (candidates.Count == 0) return new(AccountMatchKind.None, null, "");
         // A same-name record with conflicting/missing address remains a possible shared identity.
@@ -56,17 +63,45 @@ internal static class AccountIdentityRules
             $"Multiple plausible Bill-To accounts: {string.Join(", ", candidates.Select(x => x.AccountCode))}.");
         var account = candidates[0];
         if (BillingRules.ValidCode(account.AccountCode) && account.AccountClass == "O" &&
-            TextRules.CompanyMatches(account.Company, request.CompanyName) && TextRules.AddressMatches(account, request))
+            TextRules.CompanyMatches(account.Company, request.CompanyName) && (addressMatches ?? TextRules.AddressMatches)(account, request))
             return new(AccountMatchKind.Confirmed, account, "");
         return new(AccountMatchKind.Candidate, null, "Possible shared Bill-To account has different or insufficient billing evidence; address-update authority is not established. REVIEW.");
     }
 }
 
 internal sealed record EffectiveBillingState(AccountInfo Account, AccountInfo Contact, string AccountSource, string ContactSource,
-    bool AboveAddress, bool AccountCreationPending = false, bool ContactCreationPending = false);
+    bool AboveAddress, bool AccountCreationPending = false, bool ContactCreationPending = false)
+{
+    public bool RequiresContactRelationship { get; init; }
+    public bool ContactRelationshipPending { get; init; }
+    // Only fresh plans authorize the contract-address policy; older journals retain their intent.
+    public bool ContactAddressRequired { get; init; }
+    public KoreanAddressLabels? KoreanAddressLabels { get; init; }
+}
 
 internal static class BillingState
 {
+    public static BillingRequest ContactRequest(RunRow row)
+    {
+        var account = row.EffectiveBilling!.Account;
+        return row.RequestedBilling with { Address = account.Address, City = account.City, State = account.State,
+            PostalCode = account.PostalCode, Country = account.Country };
+    }
+
+    public static bool ContactNeedsUpdate(RunRow row, AccountInfo contact) =>
+        contact.FirstName != row.RequestedBilling.FirstName || contact.LastName != row.RequestedBilling.LastName ||
+        row.EffectiveBilling!.ContactAddressRequired && !TextRules.AddressMatches(contact, ContactRequest(row));
+
+    public static void SetContactAddress(AllAccountsModel contact, RunRow row)
+    {
+        var address = ContactRequest(row);
+        contact.Address1 = address.Address;
+        contact.City = address.City;
+        contact.State = address.State;
+        contact.PostalCode = address.PostalCode;
+        contact.Country = address.Country;
+    }
+
     public static void Set(RunRow row, EffectiveBillingState state)
     {
         row.EffectiveBilling = state;

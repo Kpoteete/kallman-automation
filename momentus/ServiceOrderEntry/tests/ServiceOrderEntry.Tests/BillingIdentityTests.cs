@@ -20,14 +20,16 @@ public sealed class BillingIdentityTests
     private static AllAccountsModel Organization(string code, string company = "Offline Test Company", string street = "1 Test Street") => new()
     { Organization = "10", AccountCode = code, Class = "O", Name = company, Address1 = street, City = "Test City", PostalCode = "12345", Country = "***", EventSalesStatus = "A" };
     private static AllAccountsModel Contact(string code, string parent = "ACCOUNT", string email = "test@example.invalid") => new()
-    { Organization = "10", AccountCode = code, Class = "P", PrimaryAccount = parent, FirstName = "Test", LastName = "Contact", Email = email };
+    { Organization = "10", AccountCode = code, Class = "P", PrimaryAccount = parent, FirstName = "Test", LastName = "Contact", Email = email,
+        Address1 = "1 Test Street", City = "Test City", PostalCode = "12345", Country = "***" };
     private static void Search(RetryBoundaryTests.Scenario s, params AllAccountsModel[] accounts)
     {
         s.Transport.SearchOverride = request =>
         {
             if (!request.RequestUri!.AbsolutePath.EndsWith("/Accounts/10")) return null;
             var query = Uri.UnescapeDataString(request.RequestUri.Query);
-            return Results(accounts.Where(x => query.Contains($"Class eq '{x.Class}'") &&
+            var current = accounts.Concat(s.Transport.Accounts.Values.Where(x => x.AccountCode is "NEWACCOUNT" or "NEWCONTACT"));
+            return Results(current.Where(x => query.Contains($"Class eq '{x.Class}'") &&
                 (!query.Contains("PrimaryAccount eq") || query.Contains($"PrimaryAccount eq '{x.PrimaryAccount}'"))));
         };
     }
@@ -45,15 +47,17 @@ public sealed class BillingIdentityTests
 
     [Theory]
     [InlineData("Use Above Address")] [InlineData("ECA")] [InlineData("")] [InlineData("No")]
-    public void AboveAddressRetainsIdentityAndPerformsNoBillingSearchOrMutation(string selector)
+    public void AboveAddressRetainsAccountAndReusesRequestedContact(string selector)
     {
         using var s = new RetryBoundaryTests.Scenario();
-        SetRequest(s, RunRow.EmptyBilling with { UseRequestedAddress = selector });
+        SetRequest(s, s.Row.RequestedBilling with { UseRequestedAddress = selector });
+        s.Transport.Accounts["CONTACT"] = Contact("CONTACT");
+        Search(s, s.Transport.Accounts["CONTACT"]);
         Decide(s);
         Assert.Equal("READY", s.Row.ValidationStatus);
         Assert.Equal("ACCOUNT", s.Row.FinalBillToAccount);
         Assert.Equal("CONTACT", s.Row.FinalBillToContact);
-        Assert.Equal(0, s.Gateway.RequestCount);
+        Assert.True(s.Gateway.RequestCount > 0);
         s.Apply();
         Assert.True(s.Row.ServiceOrderUpdateStatus == "COMPLETED", s.Row.UpdateMessage);
         Assert.DoesNotContain(s.Transport.Mutations, x => x.Contains("account", StringComparison.OrdinalIgnoreCase) || x.Contains("contact", StringComparison.OrdinalIgnoreCase) || x.Contains("relationship"));
@@ -62,23 +66,299 @@ public sealed class BillingIdentityTests
     }
 
     [Fact]
-    public void PopulatedSeparateFieldsCannotOverrideAboveAddress()
+    public void NewBillToCompanyAndContactBothReceiveContractAddress()
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        s.Transport.FaultEnabled = false;
+        SetRequest(s, s.Row.RequestedBilling with { CompanyName = "New Contract Company", Email = "new@example.invalid",
+            Address = "55 Contract Street", City = "Contract City", State = "Montana", PostalCode = "55555" });
+        Search(s);
+        Decide(s);
+        Assert.Equal("CREATE RELATED BILL-TO ACCOUNT", s.Row.BillToAddressAction);
+        Assert.Equal("CREATE CONTACT", s.Row.ContactAction);
+        s.Apply();
+        Assert.True(s.Row.ServiceOrderUpdateStatus == "COMPLETED", s.Row.UpdateMessage);
+        foreach (var code in new[] { "NEWACCOUNT", "NEWCONTACT" })
+        {
+            var record = s.Transport.Accounts[code];
+            Assert.Equal("55 Contract Street", record.Address1);
+            Assert.Equal("Contract City", record.City);
+            Assert.Equal("MT", record.State);
+            Assert.Equal("55555", record.PostalCode);
+            Assert.Equal("***", record.Country);
+        }
+        Assert.Equal("NEWACCOUNT", s.Transport.Order.BillToAccount);
+        Assert.Equal("NEWCONTACT", s.Transport.Order.BillToContact);
+        var count = s.Transport.Mutations.Count;
+        Assert.Equal("COMPLETED", s.Apply(restart: true).ServiceOrderUpdateStatus);
+        Assert.Equal(count, s.Transport.Mutations.Count);
+    }
+
+    [Theory]
+    [InlineData("", "street")] [InlineData("ECA", "city")] [InlineData("BA", "state")]
+    [InlineData("BA", "postal")] [InlineData("BA", "country")]
+    public void ExistingContactReceivesSelectedAddressAndPreservesUnrelatedFields(string selector, string field)
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        SetRequest(s, s.Row.RequestedBilling with { UseRequestedAddress = selector });
+        var contact = Contact("CONTACT");
+        contact.Company = "Keep Contact Company";
+        contact.Address2 = "Keep other line";
+        contact.Phone = "555-0100";
+        switch (field)
+        {
+            case "street": contact.Address1 = "Old Street"; break;
+            case "city": contact.City = "Old City"; break;
+            case "state": contact.State = "MT"; break;
+            case "postal": contact.PostalCode = "99999"; break;
+            case "country": contact.Country = "CAN"; break;
+        }
+        s.Transport.Accounts["CONTACT"] = contact;
+        Search(s, Organization("ACCOUNT"), contact);
+        Decide(s);
+        Assert.Equal("UPDATE EXISTING CONTACT", s.Row.ContactAction);
+        s.Apply();
+        Assert.True(s.Row.ServiceOrderUpdateStatus == "COMPLETED", s.Row.UpdateMessage);
+        var updated = s.Transport.Accounts["CONTACT"];
+        Assert.Equal("1 Test Street", updated.Address1); Assert.Equal("Test City", updated.City);
+        Assert.Equal("", updated.State); Assert.Equal("12345", updated.PostalCode); Assert.Equal("***", updated.Country);
+        Assert.Equal("Keep Contact Company", updated.Company); Assert.Equal("Keep other line", updated.Address2);
+        Assert.Equal("555-0100", updated.Phone); Assert.Equal("ACCOUNT", updated.PrimaryAccount);
+        Assert.Single(s.Transport.Mutations, x => x == "Update billing contact");
+        Assert.DoesNotContain("Update account address", s.Transport.Mutations);
+    }
+
+    [Fact]
+    public void ContactAddressChangedAfterEvaluationStopsBeforeAnyWrite()
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        var contact = Contact("CONTACT");
+        s.Transport.Accounts["CONTACT"] = contact;
+        Search(s, Organization("ACCOUNT"), contact);
+        Decide(s);
+        contact.Address1 = "Changed after evaluation";
+        s.Apply();
+        Assert.Equal("RECOVERY REVIEW", s.Row.ServiceOrderUpdateStatus);
+        Assert.Empty(s.Transport.Mutations);
+    }
+
+    [Theory]
+    [InlineData("street")] [InlineData("city")] [InlineData("state")] [InlineData("postal")] [InlineData("country")]
+    public void IncorrectCreatedContactAddressStopsOrderAssignmentWithoutRetry(string field)
+    {
+        using var s = new RetryBoundaryTests.Scenario("Create contact");
+        s.Transport.FaultEnabled = false;
+        Search(s, Organization("ACCOUNT"));
+        Decide(s);
+        s.Transport.ResponseOverride = result =>
+        {
+            if (result is AllAccountsModel { AccountCode: "NEWCONTACT" } contact)
+                switch (field)
+                {
+                    case "street": contact.Address1 = "Wrong Street"; break;
+                    case "city": contact.City = "Wrong City"; break;
+                    case "state": contact.State = "MT"; break;
+                    case "postal": contact.PostalCode = "99999"; break;
+                    case "country": contact.Country = "CAN"; break;
+                }
+            return result;
+        };
+        s.Apply();
+        Assert.Equal("UNKNOWN WRITE OUTCOME", s.Row.ServiceOrderUpdateStatus);
+        Assert.DoesNotContain("Update service order", s.Transport.Mutations);
+        s.Apply(restart: true);
+        Assert.Single(s.Transport.Mutations, x => x == "Create contact");
+        Assert.Empty(s.Transport.Emails);
+    }
+
+    [Theory]
+    [InlineData("ECA")] [InlineData("BA")] [InlineData("")] [InlineData("N")] [InlineData("Below Address")]
+    public void AddressChoiceDoesNotSuppressRequestedContactCreation(string selector)
+    {
+        using var s = new RetryBoundaryTests.Scenario("Create contact");
+        s.Transport.FaultEnabled = false;
+        SetRequest(s, s.Row.RequestedBilling with { UseRequestedAddress = selector,
+            FirstName = "Ashley", LastName = "Tubbs", Email = "ap@example.invalid",
+            Address = "", City = "", State = "", PostalCode = "", Country = "" });
+        Search(s);
+        Decide(s);
+        Assert.Equal("PREPARED", s.Row.ValidationStatus);
+        Assert.Equal("CREATE CONTACT", s.Row.ContactAction);
+        // Changes to the former order contact must not block the newly requested contact.
+        s.Transport.Accounts["CONTACT"] = Contact("CONTACT", email: "changed@example.invalid");
+        s.Apply();
+        Assert.True(s.Row.ServiceOrderUpdateStatus == "COMPLETED", s.Row.UpdateMessage);
+        var created = s.Transport.Accounts["NEWCONTACT"];
+        Assert.Equal("ACCOUNT", created.PrimaryAccount);
+        Assert.Equal("Ashley", created.FirstName);
+        Assert.Equal("Tubbs", created.LastName);
+        Assert.Equal("ap@example.invalid", created.Email);
+        Assert.Equal("1 Test Street", created.Address1);
+        Assert.Equal("Test City", created.City);
+        Assert.Equal("12345", created.PostalCode);
+        Assert.Equal("***", created.Country);
+        Assert.Equal("NEWCONTACT", s.Transport.Order.BillToContact);
+        Assert.Equal("ACCOUNT", s.Transport.Order.BillToAccount);
+        Assert.DoesNotContain("Create organization account", s.Transport.Mutations);
+        Assert.DoesNotContain("Update account address", s.Transport.Mutations);
+        Assert.Contains("Ashley", ReadyEmailBuilder.Build(s.Row, []));
+        Assert.Single(s.Transport.Mutations, x => x == "Create contact");
+        Assert.Equal("COMPLETED", s.Apply(restart: true).ServiceOrderUpdateStatus);
+        Assert.Single(s.Transport.Mutations, x => x == "Create contact");
+    }
+
+    [Theory]
+    [InlineData("ECA")] [InlineData("BA")]
+    public void RequestedExistingContactIsAssignedRegardlessOfAddressChoice(string selector)
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        SetRequest(s, s.Row.RequestedBilling with { UseRequestedAddress = selector });
+        var contact = Contact("REQUESTED");
+        s.Transport.Accounts["REQUESTED"] = contact;
+        Search(s, Organization("ACCOUNT"), contact);
+        Decide(s);
+        Assert.Equal("USE EXISTING CONTACT", s.Row.ContactAction);
+        s.Apply();
+        Assert.True(s.Row.ServiceOrderUpdateStatus == "COMPLETED", s.Row.UpdateMessage);
+        Assert.Equal("REQUESTED", s.Transport.Order.BillToContact);
+        Assert.DoesNotContain("Create contact", s.Transport.Mutations);
+    }
+
+    [Theory]
+    [InlineData("ECA", true)] [InlineData("BA", true)] [InlineData("ECA", false)]
+    public void ContactNameUpdateHasSingleDispatchAndReconcilesLostResponse(string selector, bool accepted)
+    {
+        using var s = new RetryBoundaryTests.Scenario("Update billing contact");
+        SetRequest(s, s.Row.RequestedBilling with { UseRequestedAddress = selector, FirstName = "Ashley", LastName = "Tubbs" });
+        var contact = Contact("CONTACT");
+        contact.Address1 = "Preserve contact street";
+        s.Transport.Accounts["CONTACT"] = contact;
+        Search(s, Organization("ACCOUNT"), contact);
+        Decide(s);
+        Assert.Equal("UPDATE EXISTING CONTACT", s.Row.ContactAction);
+        s.Transport.ApplyEffect = accepted;
+        s.Apply();
+        Assert.Equal("UNKNOWN WRITE OUTCOME", s.Row.ServiceOrderUpdateStatus);
+        Assert.Equal(new[] { "Update billing contact" }, s.Transport.Mutations);
+        s.Transport.FaultEnabled = false;
+        s.Transport.ApplyEffect = true;
+        var resumed = s.Apply(restart: true);
+        Assert.Equal(accepted ? "COMPLETED" : "RECOVERY REVIEW", resumed.ServiceOrderUpdateStatus);
+        Assert.Single(s.Transport.Mutations, x => x == "Update billing contact");
+        if (accepted)
+        {
+            Assert.Equal("Ashley", s.Transport.Accounts["CONTACT"].FirstName);
+            Assert.Equal("Tubbs", s.Transport.Accounts["CONTACT"].LastName);
+            Assert.Equal("1 Test Street", s.Transport.Accounts["CONTACT"].Address1);
+            Assert.Equal("CONTACT", s.Transport.Order.BillToContact);
+        }
+        else Assert.Single(s.Transport.Mutations);
+    }
+
+    [Fact]
+    public void AboveAddressIgnoresReplacementAddressButRejectsInvalidContact()
     {
         using var s = new RetryBoundaryTests.Scenario();
         SetRequest(s, s.Row.RequestedBilling with { UseRequestedAddress = "Use Above Address", CompanyName = "Different Co.", Email = "malformed", Address = "Other address" });
         Decide(s);
-        Assert.Equal("READY", s.Row.ValidationStatus);
+        Assert.Equal("REVIEW", s.Row.ValidationStatus);
         Assert.Equal("Offline Test Company", s.Row.EffectiveBilling!.Account.Company);
         Assert.Equal("test@example.invalid", s.Row.EffectiveBilling.Contact.Email);
         Assert.Equal("Different Co.", s.Row.RequestedBilling.CompanyName);
         s.Apply();
-        Assert.Equal("COMPLETED", s.Row.ServiceOrderUpdateStatus);
+        Assert.Empty(s.Transport.Mutations);
         Assert.DoesNotContain("Create organization account", s.Transport.Mutations);
         Assert.DoesNotContain("Create contact", s.Transport.Mutations);
         var html = ReadyEmailBuilder.Build(s.Row, []);
         Assert.DoesNotContain("Different Co.", html);
         Assert.DoesNotContain("malformed", html);
     }
+
+    [Theory]
+    [InlineData("BA")] [InlineData("Below Address")] [InlineData("Yes")] [InlineData("Y")]
+    public void BlankBelowAddressKeepsAccountButCreatesRequestedContact(string selector)
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        var request = s.Row.RequestedBilling with { UseRequestedAddress = selector,
+            CompanyName = "Submitted company", Email = "different@example.invalid",
+            Address = " ", City = "", State = " ", PostalCode = "", Country = " " };
+        SetRequest(s, request);
+        Search(s);
+        Decide(s);
+        Assert.Equal("PREPARED", s.Row.ValidationStatus);
+        Assert.True(s.Row.BillingRequestBypassed);
+        Assert.True(s.Row.EffectiveBilling!.AboveAddress);
+        Assert.Equal(selector, s.Row.RequestedBilling.UseRequestedAddress);
+        Assert.True(s.Gateway.RequestCount > 0);
+        s.Apply();
+        Assert.Equal("COMPLETED", s.Row.ServiceOrderUpdateStatus);
+        Assert.Equal("SUCCESS", s.Row.Outcome);
+        Assert.Equal("ACCOUNT", s.Transport.Order.BillToAccount);
+        Assert.Equal("NEWCONTACT", s.Transport.Order.BillToContact);
+        Assert.Equal("1 Test Street", s.Row.FinalAddress);
+        Assert.Single(s.Transport.Mutations, x => x == "Create contact");
+        Assert.DoesNotContain("Create organization account", s.Transport.Mutations);
+        Assert.DoesNotContain("Add BTO relationship", s.Transport.Mutations);
+        Assert.Single(s.Transport.Mutations, x => x == "Add CTA relationship");
+        var html = ReadyEmailBuilder.Build(s.Row, []);
+        Assert.DoesNotContain("Submitted company", html);
+        Assert.Contains("different@example.invalid", html);
+    }
+
+    [Theory]
+    [InlineData("street")] [InlineData("city")] [InlineData("state")] [InlineData("postal")] [InlineData("country")]
+    public void PartiallyEnteredBelowAddressStillRequiresReview(string field)
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        var request = s.Row.RequestedBilling with { Address = "", City = "", State = "", PostalCode = "", Country = "" };
+        request = field switch
+        {
+            "street" => request with { Address = "1 Main Street" },
+            "city" => request with { City = "Bethesda" },
+            "state" => request with { State = "MD" },
+            "postal" => request with { PostalCode = "20817" },
+            _ => request with { Country = "USA" }
+        };
+        SetRequest(s, request);
+        Decide(s);
+        Assert.Equal("REVIEW", s.Row.ValidationStatus);
+        Assert.False(s.Row.BillingRequestBypassed);
+        Assert.Contains("incomplete", s.Row.ValidationMessage);
+        s.Apply();
+        Assert.Empty(s.Transport.Mutations);
+    }
+
+    [Fact]
+    public void BelowAddressFilledAfterBlankFallbackStopsBeforeWrites()
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        SetRequest(s, s.Row.RequestedBilling with { Address = "", City = "", State = "", PostalCode = "", Country = "" });
+        Search(s, Contact("CONTACT"));
+        Decide(s);
+        Assert.Equal("READY", s.Row.ValidationStatus);
+        s.Transport.BillingInstructions = RetryBoundaryTests.TestRequest();
+        s.Apply();
+        Assert.Equal("REVIEW", s.Row.Outcome);
+        Assert.Contains("changed", s.Row.UpdateMessage);
+        Assert.Empty(s.Transport.Mutations);
+    }
+
+    [Fact]
+    public void BlankBelowAddressStillRequiresUsableExistingBilling()
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        SetRequest(s, RunRow.EmptyBilling with { UseRequestedAddress = "BA" });
+        s.Row.ExistingBillToAccount = s.Row.ExistingBillToAccount with { Address = "" };
+        Decide(s);
+        Assert.Equal("REVIEW", s.Row.ValidationStatus);
+        Assert.Contains("incomplete", s.Row.ValidationMessage);
+        s.Apply();
+        Assert.Empty(s.Transport.Mutations);
+    }
+
+    [Fact]
+    public void BlankAddressDoesNotBypassUnknownBillingSelector() =>
+        Assert.Equal("UNKNOWN", RetryBoundaryTests.TestBillingConfiguration().Selector(RunRow.EmptyBilling with { UseRequestedAddress = "UNKNOWN" }));
 
     [Fact]
     public void ConflictingAboveOrderAccountRequiresReviewWithoutReassignment()
@@ -125,11 +405,16 @@ public sealed class BillingIdentityTests
         Assert.True(s.Row.ServiceOrderUpdateStatus == "COMPLETED", s.Row.UpdateMessage);
         Assert.Equal(name, s.Transport.Accounts["NEWACCOUNT"].Name);
         Assert.Equal("N", s.Transport.Accounts["NEWACCOUNT"].EventSalesStatus);
+        Assert.Equal("A", s.Transport.Accounts["NEWACCOUNT"].Receivables);
+        Assert.Equal("A", s.Transport.Accounts["NEWACCOUNT"].MemberStatus);
+        var creationIntent = Newtonsoft.Json.Linq.JObject.Parse(s.Store.Load().Single().Stages.Single(x => x.Operation == "Create organization account").Intent);
+        Assert.Equal("A", (string?)creationIntent["Receivables"]);
+        Assert.Equal("A", (string?)creationIntent["MemberStatus"]);
         Assert.Equal(name, s.Row.EffectiveBilling!.Account.Company);
         Assert.Equal("NEWACCOUNT", s.Transport.Order.BillToAccount);
         Assert.Equal("NEWACCOUNT", s.Transport.Accounts["NEWCONTACT"].PrimaryAccount);
         Assert.All(s.Store.Load().Single().Stages, x => Assert.Equal(StageStatus.Verified, x.Status));
-        Assert.All(s.Store.Load().Single().Stages.Where(x => x.Operation == "Add relationship"),
+        Assert.All(s.Store.Load().Single().Stages.Where(x => x.Operation == "Add relationship" && x.Target.Contains("type=BTO")),
             x => Assert.Null(JsonConvert.DeserializeObject<RelationshipsModel>(x.Result)!.EventSalesDesignation));
         var second = s.Apply(restart: true);
         Assert.Equal("COMPLETED", second.ServiceOrderUpdateStatus);
@@ -146,6 +431,28 @@ public sealed class BillingIdentityTests
         s.Apply();
         Assert.Equal("UNKNOWN WRITE OUTCOME", s.Row.ServiceOrderUpdateStatus);
         Assert.Equal(new[] { "Create organization account" }, s.Transport.Mutations);
+    }
+
+    [Theory]
+    [InlineData("Receivables", null)] [InlineData("Receivables", "I")]
+    [InlineData("MemberStatus", null)] [InlineData("MemberStatus", "I")]
+    public void CreatedBillToAccountMissingOrWrongActiveStatusStopsFollowingMutations(string field, string? value)
+    {
+        using var s = new RetryBoundaryTests.Scenario("Create organization account");
+        s.Transport.FaultEnabled = false;
+        s.Transport.AccountReadOverride = model =>
+        {
+            if (model.AccountCode == "NEWACCOUNT")
+            {
+                if (field == "Receivables") model.Receivables = value;
+                else model.MemberStatus = value;
+            }
+            return model;
+        };
+        s.Apply();
+        Assert.Equal("UNKNOWN WRITE OUTCOME", s.Row.ServiceOrderUpdateStatus);
+        Assert.Equal(new[] { "Create organization account" }, s.Transport.Mutations);
+        Assert.Empty(s.Transport.SavedEmails);
     }
 
     [Theory]
@@ -210,7 +517,7 @@ public sealed class BillingIdentityTests
 
     [Theory]
     [InlineData("test@example.invalid")] [InlineData(" Test@Example.Invalid ")]
-    public void ExistingContactEmailWinsRegardlessOfSubmittedNameCaseOrWhitespace(string email)
+    public void ExistingContactEmailMatchesAndSubmittedNameIsUpdated(string email)
     {
         using var s = new RetryBoundaryTests.Scenario();
         SetRequest(s, s.Row.RequestedBilling with { Email = email, FirstName = "Different", LastName = "Spelling" });
@@ -222,6 +529,9 @@ public sealed class BillingIdentityTests
         Assert.Equal("Test", s.Row.EffectiveBilling!.Contact.FirstName);
         s.Apply();
         Assert.Equal("COMPLETED", s.Row.ServiceOrderUpdateStatus);
+        Assert.Equal("Different", s.Transport.Accounts["REUSED"].FirstName);
+        Assert.Equal("Spelling", s.Transport.Accounts["REUSED"].LastName);
+        Assert.Single(s.Transport.Mutations, x => x == "Update billing contact");
         Assert.DoesNotContain("Create contact", s.Transport.Mutations);
     }
 
@@ -239,13 +549,15 @@ public sealed class BillingIdentityTests
     }
 
     [Fact]
-    public void CrossAccountEmailRequiresReviewWithoutRelationshipOrCreation()
+    public void CrossAccountEmailWithUnverifiedRequestedNameRequiresReviewWithoutRelationshipOrCreation()
     {
         using var s = new RetryBoundaryTests.Scenario();
-        Search(s, Organization("ACCOUNT"), Contact("CROSS", "ANOTHER"));
+        var otherContact = Contact("CROSS", "ANOTHER");
+        otherContact.FirstName = "Different";
+        Search(s, Organization("ACCOUNT"), otherContact);
         Decide(s);
         Assert.Equal("REVIEW", s.Row.ValidationStatus);
-        Assert.Contains("another account", s.Row.ContactDecisionMessage);
+        Assert.Contains("single existing contact", s.Row.ContactDecisionMessage);
         s.Apply();
         Assert.Empty(s.Transport.Mutations);
     }
@@ -320,8 +632,9 @@ public sealed class BillingIdentityTests
         using var s = new RetryBoundaryTests.Scenario();
         SetRequest(s, s.Row.RequestedBilling with { UseRequestedAddress = selector });
         Decide(s);
-        Assert.Equal(unknown ? "REVIEW" : "READY", s.Row.ValidationStatus);
-        Assert.Equal(0, s.Gateway.RequestCount);
+        Assert.Equal(unknown ? "REVIEW" : "PREPARED", s.Row.ValidationStatus);
+        if (unknown) Assert.Equal(0, s.Gateway.RequestCount);
+        else Assert.True(s.Gateway.RequestCount > 0);
     }
 
     [Theory]
@@ -453,6 +766,48 @@ public sealed class BillingIdentityTests
         s.Gateway.ReconcileIncomplete();
         Assert.Equal("LEGACY", journal.CreatedAccount("Create organization account"));
         Assert.Equal(StageStatus.Verified, stage.Status);
+        Assert.Empty(s.Transport.Mutations);
+    }
+
+    [Fact]
+    public void HistoricalCreatedAccountWithoutReceivablesOrMemberStatusReconcilesItsOriginalIntent()
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        var model = Organization("LEGACY"); model.State = "";
+        s.Transport.Accounts["LEGACY"] = model;
+        var journal = s.Gateway.Journal!;
+        var stage = journal.Prepare("Create organization account", "legacy create stage", JsonConvert.SerializeObject(new
+        { model.Organization, model.Class, model.Name, model.EventSalesStatus, model.Address1, model.City, model.State, model.PostalCode, model.Country }), null);
+        journal.Dispatching(stage);
+        journal.Result(stage, JsonConvert.SerializeObject(model));
+        s.Gateway.ReconcileIncomplete();
+        Assert.Equal(StageStatus.Verified, stage.Status);
+        Assert.Equal("LEGACY", journal.CreatedAccount("Create organization account"));
+        Assert.Empty(s.Transport.Mutations);
+    }
+
+    [Theory]
+    [InlineData("Create contact")] [InlineData("Update billing contact")]
+    public void HistoricalContactStageWithoutAddressReconcilesReadOnly(string operation)
+    {
+        using var s = new RetryBoundaryTests.Scenario();
+        var contact = Contact("LEGACY");
+        contact.Company = "Existing Company";
+        contact.Address1 = "Unrecorded legacy address";
+        s.Transport.Accounts["LEGACY"] = contact;
+        var intent = operation == "Create contact"
+            ? JsonConvert.SerializeObject(new { contact.Organization, contact.Class, contact.PrimaryAccount, contact.Company,
+                contact.FirstName, contact.LastName, contact.Email })
+            : JsonConvert.SerializeObject(new { contact.AccountCode, contact.Class, contact.PrimaryAccount,
+                contact.FirstName, contact.LastName, contact.Email });
+        var journal = s.Gateway.Journal!;
+        var stage = journal.Prepare(operation, "legacy contact stage", intent, null);
+        journal.Dispatching(stage);
+        journal.Result(stage, JsonConvert.SerializeObject(contact));
+        s.Gateway.ReconcileIncomplete();
+        Assert.Equal(StageStatus.Verified, stage.Status);
+        Assert.Equal(intent, stage.Intent);
+        Assert.False(s.Row.EffectiveBilling!.ContactAddressRequired);
         Assert.Empty(s.Transport.Mutations);
     }
 }

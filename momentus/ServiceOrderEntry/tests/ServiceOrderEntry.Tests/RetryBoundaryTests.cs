@@ -72,10 +72,10 @@ public sealed class RetryBoundaryTests
         Assert.Contains("HttpCallFailed", scenario.Row.UpdateMessage);
         Assert.Equal(3, Runner.ApplyExitCode([scenario.Row]));
         // Earlier confirmed effects are retained, but no stage after uncertainty runs.
-        if (stage is not ("Send ready email" or "Activate order" or "Activate exhibitor"))
+        if (stage != "Send ready email")
             Assert.DoesNotContain("Send ready email", scenario.Transport.Mutations);
-        if (stage != "Activate exhibitor") Assert.DoesNotContain("Activate exhibitor", scenario.Transport.Mutations);
-        if (stage is not ("Activate order" or "Activate exhibitor")) Assert.DoesNotContain("Activate order", scenario.Transport.Mutations);
+        if (stage is not ("Activate exhibitor" or "Send ready email")) Assert.DoesNotContain("Activate exhibitor", scenario.Transport.Mutations);
+        if (stage is not ("Activate order" or "Activate exhibitor" or "Send ready email")) Assert.DoesNotContain("Activate order", scenario.Transport.Mutations);
         if (stage == "Send ready email")
         {
             Assert.Equal("UNKNOWN WRITE OUTCOME", scenario.Row.ReadyEmailStatus);
@@ -254,7 +254,7 @@ public sealed class RetryBoundaryTests
         Assert.True(scenario.Row.ServiceOrderUpdateStatus == "COMPLETED", scenario.Row.UpdateMessage);
         Assert.Equal("SENT", scenario.Row.ReadyEmailStatus);
         Assert.Equal(new[] { "Update service order", "Copy contract document", "Add payment schedule note",
-            "Update exhibitor categories", "Send ready email", "Activate order", "Activate exhibitor" }, scenario.Transport.Mutations);
+            "Update exhibitor categories", "Activate order", "Activate exhibitor", "Send ready email" }, scenario.Transport.Mutations);
         Assert.Equal(0, Runner.ApplyExitCode([scenario.Row]));
     }
 
@@ -271,10 +271,10 @@ public sealed class RetryBoundaryTests
         public IJournalStore Store { get; set; }
         public RunRow Row { get; } = new()
         {
-            EventId = 1, ExhibitorId = 2, OrderNumber = 3, ProposedOrderAccountRep = "REP", ProposedCategory = 28,
+            EventId = 1, ExhibitorId = 2, OrderNumber = 3, ProposedOrderAccountRep = "REP", OrderAccountRepEmail = "employee@example.invalid", ProposedCategory = 28,
             ProposedBoothNumber = "101", FinalBillToAccount = "ACCOUNT", FinalBillToContact = "CONTACT",
             BillToAddressAction = "KEEP EXISTING", ContactAction = "KEEP EXISTING", FinalExhibitorCategories = "1",
-            PaymentScheduleText = "Payment Schedule\n50% Deposit", ReadyEmailRecipient = "test@example.invalid",
+            PaymentScheduleText = "Payment Schedule\n50% Deposit", ReadyEmailRecipient = "test@example.invalid", ReadyEmailCcRecipient = "employee@example.invalid",
             ExistingBillToAccount = RunRow.EmptyAccount with { AccountCode = "ACCOUNT" },
             RequestedBilling = RunRow.EmptyBilling with
             {
@@ -294,6 +294,7 @@ public sealed class RetryBoundaryTests
             if (failingStage is "Create organization account" or "Add BTO relationship") Row.BillToAddressAction = "CREATE RELATED BILL-TO ACCOUNT";
             if (failingStage == "Create contact") Row.ContactAction = "CREATE CONTACT";
             Transport = new FakeTransport(failingStage);
+            Transport.Accounts["REP"] = new AllAccountsModel { Organization = "10", AccountCode = "REP", Class = "P", Email = "employee@example.invalid" };
             Row.BillingVersion = 1;
             Row.BillingSourceAccount = "ACCOUNT";
             Row.BillingConfiguration = Options.Billing;
@@ -325,7 +326,7 @@ public sealed class RetryBoundaryTests
             Row.ProposedCategoryName = "Turnkey";
             Row.ManagedNoteSequence = Transport.Notes.Count == 0 ? null : Convert.ToInt32(Transport.Notes[0].SequenceNumber);
             Row.ManagedNoteContentHash = Transport.Notes.Count == 0 ? "" : ManagedNoteRules.ContentHash(ManagedNoteRules.Text(Transport.Notes[0]));
-            Row.DecisionInputs = PlanGuard.Capture(Transport.Order, Transport.Exhibitor, Transport.Items.Select(x => new OrderItemInfo(x.OrderLineNumber ?? 0, x.ResourceCode ?? "", x.Description ?? "", x.AltDesc ?? "") { EvidenceHash = OrderIdentity.Hash(JsonConvert.SerializeObject(x)) }).ToList(),
+            Row.DecisionInputs = PlanGuard.Capture(Transport.Order, Transport.Exhibitor, Transport.Items.Select(ItemEvidenceRules.Capture).ToList(),
                 new BoothEvidence("101", OrderIdentity.Hash(JsonConvert.SerializeObject(Transport.Activities.OrderBy(x => x.SequenceNumber)))), [new("Turnkey", 28, ["Turnkey"])]);
             Transport.Requests.Clear();
             Store = new FileJournalStore(Options.StateFolder);
@@ -371,7 +372,7 @@ public sealed class RetryBoundaryTests
         {
             OrganizationCode = "10", OrderNumber = 3, Event = 1, Exhibitor = 2, Function = 4, Account = "ACCOUNT", BillToAccount = "ACCOUNT", BillToContact = "CONTACT", OrderStatus = "PC"
         };
-        public ExhibitorsModel Exhibitor { get; private set; } = new() { OrganizationCode = "10", ExhibitorID = 2, Event = 1, ExhibitorStatus = 35, ExhibitorType = "ME", Salesperson = "REP", ExhibitorCategory = "" };
+        public ExhibitorsModel Exhibitor { get; private set; } = new() { OrganizationCode = "10", ExhibitorID = 2, Event = 1, ExhibitorStatus = 35, ExhibitorType = "ME", Salesperson = "REP", ExhibitorCategory = "", ExhibitorUserFields = new() { UserText14 = "YES" } };
         public readonly List<ServiceOrdersModel> OtherOrders = [];
         public readonly List<ServiceOrderItemsModel> Items = [new() { OrderLineNumber = 1, ResourceCode = "TK", Description = "Turnkey Package" }];
         public readonly List<ActivitiesModel> Activities = [new() { SequenceNumber = 1, Type = "BP", EnteredOn = new DateTime(2026, 10, 4), PlainText = "Accepted booth 101, and had these comments: ok" }];
@@ -380,7 +381,7 @@ public sealed class RetryBoundaryTests
         public readonly List<DocumentsModel> SavedEmails = [];
         public readonly Dictionary<string, AllAccountsModel> Accounts = [];
         public BillingRequest BillingInstructions { get; set; } = TestRequest();
-        private readonly Dictionary<string, RelationshipsModel> relationships = [];
+        public readonly Dictionary<string, RelationshipsModel> relationships = [];
         public readonly List<NotesModel> Notes = failingStage == "Update payment schedule note"
             ? [new NotesModel { SequenceNumber = 12, Class = "SON", Type = "OH", OrderNumber = 3, Title = ManagedNoteRules.Title, PlainText = "Old terms" }] : [];
         public readonly List<DocumentsModel> Contracts = [new()
@@ -401,8 +402,8 @@ public sealed class RetryBoundaryTests
                     if (ReadFailureStatus.HasValue) return Error(ReadFailureStatus.Value);
                     throw new TimeoutException("Transient read timeout.");
                 }
-                if (path.StartsWith("ServiceOrders/10/")) return Json(path.EndsWith("/3") ? Order : OtherOrders.Single(x => x.OrderNumber == int.Parse(path.Split('/').Last())));
-                if (path == "Exhibitors/10/2") return Json(Exhibitor);
+                if (path.StartsWith("ServiceOrders/10/")) return Json(int.Parse(path.Split('/').Last()) == Order.OrderNumber ? Order : OtherOrders.Single(x => x.OrderNumber == int.Parse(path.Split('/').Last())));
+                if (path == $"Exhibitors/10/{Exhibitor.ExhibitorID}") return Json(Exhibitor);
                 if (path.StartsWith("Relationships/10/")) return Json(relationships[path]);
                 if (path.StartsWith("Accounts/10/"))
                 {
@@ -440,15 +441,23 @@ public sealed class RetryBoundaryTests
                 if (path == "ServiceOrderItems/10") return Search(Items);
                 if (path == "Activities/10") return Search(Activities);
                 if (path == "Exhibitors/10") return Search(Array.Empty<ExhibitorsModel>());
+                if (path == "Countries/10") return Search(new[] { new CountriesModel { Code = "***", Description = "United States", ISOCode2 = "US", ISOCode3 = "USA" } });
+                if (path == "States") return Search(new[] { new StatesModel { CountryCode = "***", Code = "MT", Name = "Montana" } });
                 if (path == "ServiceOrders/10") return Search(new[] { Order }.Concat(OtherOrders));
                 if (path == "Accounts/10")
                 {
                     var pool = Accounts.Values.Where(x => !string.IsNullOrWhiteSpace(x.AccountCode));
                     if (query.Contains("Class eq 'O'")) pool = pool.Where(x => x.Class == "O");
                     if (query.Contains("Class eq 'P'")) pool = pool.Where(x => x.Class == "P");
+                    var fragments = System.Text.RegularExpressions.Regex.Matches(query, @"substringof\('([^']+)', (Name|Email)\)")
+                        .Select(x => x.Groups[1].Value).ToArray();
+                    if (fragments.Length > 0) pool = pool.Where(x => fragments.Any(f => (query.Contains(", Email)") ? x.Email : x.Name)?.Contains(f, StringComparison.Ordinal) == true));
+                    if (query.Contains("PrimaryAccount eq")) pool = pool.Where(x => query.Contains($"PrimaryAccount eq '{x.PrimaryAccount}'"));
                     return Search(pool.ToArray());
                 }
-                if (path == "Relationships/10") return Search(Array.Empty<AllAccountsModel>());
+                if (path == "Relationships/10") return Search(relationships.Values.Where(x =>
+                    query.Contains($"MasterAccountCode eq '{x.MasterAccountCode}'") && query.Contains($"SubordinateAccountCode eq '{x.SubordinateAccountCode}'") &&
+                    query.Contains($"RelationshipType eq '{x.RelationshipType}'")).ToArray());
                 throw new InvalidOperationException($"Unexpected offline GET: {path}");
             }
 
@@ -465,7 +474,8 @@ public sealed class RetryBoundaryTests
             }
             else if (path.StartsWith("Accounts/10/") && request.Method == HttpMethod.Put)
             {
-                stage = "Update account address";
+                stage = JsonConvert.DeserializeObject<AllAccountsModel>(body)!.Class == "P"
+                    ? "Update billing contact" : "Update account address";
                 result = JsonConvert.DeserializeObject<AllAccountsModel>(body)!;
                 if (ApplyEffect) Accounts[((AllAccountsModel)result).AccountCode] = (AllAccountsModel)result;
             }
@@ -482,7 +492,7 @@ public sealed class RetryBoundaryTests
                 stage = model.OrderStatus == "A" ? "Activate order" : "Update service order";
                 if (ApplyEffect && WriteFailureStatus is not (>= 400 and < 500))
                 {
-                    if (model.OrderNumber == 3) Order = model;
+                    if (model.OrderNumber == Order.OrderNumber) Order = model;
                     else { OtherOrders.RemoveAll(x => x.OrderNumber == model.OrderNumber); OtherOrders.Add(model); }
                 }
                 result = model;
@@ -505,7 +515,7 @@ public sealed class RetryBoundaryTests
                 if (ApplyEffect) { Notes.RemoveAll(x => x.SequenceNumber == model.SequenceNumber); Notes.Add(model); }
                 result = model;
             }
-            else if (path == "Exhibitors/10/2")
+            else if (path == $"Exhibitors/10/{Exhibitor.ExhibitorID}")
             {
                 var model = JsonConvert.DeserializeObject<ExhibitorsModel>(body)!;
                 stage = model.ExhibitorStatus == 2 ? "Activate exhibitor" : "Update exhibitor categories";

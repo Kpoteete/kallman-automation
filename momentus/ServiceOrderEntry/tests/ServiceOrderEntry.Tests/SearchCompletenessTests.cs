@@ -188,7 +188,7 @@ public sealed class SearchCompletenessTests
     public void OrganizationMatchOnPageTwoCoversAcceptedNameVariations(string requested, string existing)
     {
         using var s = new RetryBoundaryTests.Scenario();
-        Pages(s, "Accounts", [Account("OTHER", "Other company")], [Account("MATCH", existing)]);
+        Pages(s, "Accounts", [Account("OTHER", "Acme Parts")], [Account("MATCH", existing)]);
         var match = Assert.Single(s.Gateway.FindOrganizationCandidates(s.Row.RequestedBilling with { CompanyName = requested }));
         Assert.Equal("MATCH", match.AccountCode);
         Assert.Equal(2, s.Gateway.RequestCount);
@@ -278,11 +278,16 @@ public sealed class SearchCompletenessTests
     }
 
     [Fact]
-    public void ItemLaterFailureStopsEvaluationBeforeMutation()
+    public void ItemLaterFailureIsReportedWithoutUsingPartialItemsForCategory()
     {
         using var s = new RetryBoundaryTests.Scenario();
         Pages(s, "ServiceOrderItems", [new ServiceOrderItemsModel { OrderLineNumber = 1 }], [new ServiceOrderItemsModel { OrderLineNumber = 2 }], failLater: true);
-        Assert.Throws<DecisionSearchException>(() => Runner.Evaluate(s.Gateway, new(s.Transport.Order, s.Transport.Exhibitor), [], []));
+        var row = Runner.Evaluate(s.Gateway, new(s.Transport.Order, s.Transport.Exhibitor), [], []);
+        Assert.False(row.CategoryResolved);
+        Assert.Null(row.ProposedCategory);
+        Assert.Contains(row.Issues, x => x.Component == "Category" && x.Failed);
+        Assert.True(row.BoothResolved);
+        Assert.True(row.ContractsResolved);
         Assert.Empty(s.Transport.Mutations);
     }
 
@@ -336,11 +341,13 @@ public sealed class SearchCompletenessTests
     }
 
     [Fact]
-    public void SavedEmailOnPageTwoPreventsResend()
+    public void PriorEmailOnPageTwoDoesNotBlockCurrentRunPlanning()
     {
         using var s = new RetryBoundaryTests.Scenario();
         Pages(s, "Documents", [Document(1, "Other email", "M")], [Document(2, "Ready for invoicing - Service Order 3", "M")]);
-        Assert.Throws<RecoveryReviewException>(() => s.Gateway.ReadyEmailWasSent(3));
+        Assert.False(s.Gateway.ReadyEmailWasSent(3));
+        // A prior description supplies no acceptance proof. An actual send
+        // still requires a verified current-run handoff.
         Assert.Throws<RecoveryReviewException>(() => s.Gateway.SendReadyForInvoicingEmail(s.Row, []));
         Assert.Empty(s.Transport.Mutations);
     }
@@ -356,8 +363,16 @@ public sealed class SearchCompletenessTests
                 Pages(s, "Notes", [Note(1)], [Note(2)], failLater: true);
                 Assert.Throws<DecisionSearchException>(() => s.Gateway.SavePaymentScheduleNote(3, "new terms")); break;
             case "email":
+                var runner = new Runner(s.Options with { SendReadyEmail = false });
+                runner.UseJournalStore(s.Store);
+                runner.Apply(s.Gateway, new(s.Transport.Order, s.Transport.Exhibitor), s.Row);
+                Assert.True(s.Row.Outcome == "SUCCESS", s.Row.UpdateMessage);
+                var evidence = s.Store.Load().Single();
+                evidence.SendEmail = true; evidence.Complete = false;
+                s.Gateway.Journal = new ProcessingJournal(s.Store, evidence, "current-test");
+                s.Transport.Mutations.Clear();
                 Pages(s, "Documents", [Document(1, "Other email", "M")], [Document(2, type: "M")], failLater: true);
-                Assert.Throws<DecisionSearchException>(() => s.Gateway.SendReadyForInvoicingEmail(s.Row, [])); break;
+                Assert.Throws<DecisionSearchException>(() => s.Gateway.SendReadyForInvoicingEmail(s.Row, evidence.Handoff!.Attachments)); break;
             case "copy":
                 Pages(s, "Documents", [Document(10)], [Document(12)], failLater: true);
                 Assert.Throws<DecisionSearchException>(() => s.Gateway.CopyContractPdfToOrder(new("C", 11, "contract.pdf", "Contract", "CON"), s.Transport.Order)); break;
@@ -425,12 +440,11 @@ public sealed class SearchCompletenessTests
             var filter = Uri.UnescapeDataString(request.RequestUri.Query);
             orderSearches.Add(filter);
             Assert.Contains("OrderStatus eq 'PC'", filter);
-            var exhibitor = exhibitors.Single(x => filter.Contains($"Exhibitor eq {x.ExhibitorID} and"));
-            var orders = new[]
+            var orders = exhibitors.Where(x => filter.Contains($"Exhibitor eq {x.ExhibitorID} and")).SelectMany(exhibitor => new[]
             {
                 new ServiceOrdersModel { OrganizationCode = "10", Event = exhibitor.Event, Exhibitor = exhibitor.ExhibitorID, OrderNumber = exhibitor.ExhibitorID * 10 + 1, OrderStatus = "PC" },
                 new ServiceOrdersModel { OrganizationCode = "10", Event = exhibitor.Event, Exhibitor = exhibitor.ExhibitorID, OrderNumber = exhibitor.ExhibitorID * 10, OrderStatus = "PC" }
-            };
+            }).ToArray();
             return SearchResponse(orders, 1, orders.Length, null, orders.Length);
         };
         var candidates = s.Gateway.FindCandidates();
@@ -450,7 +464,7 @@ public sealed class SearchCompletenessTests
         Assert.Equal("FAILED", s.Row.ServiceOrderUpdateStatus);
         Assert.Contains("PaginationLoop", s.Row.UpdateMessage);
         Assert.Empty(s.Transport.Mutations);
-        Assert.Equal(6, s.Gateway.RequestCount); // Exact eligibility/billing/identity reads plus two search pages.
+        Assert.Equal(8, s.Gateway.RequestCount); // Exact reads plus two attempted targeted pages and two required fallback pages.
     }
 
     [Fact]

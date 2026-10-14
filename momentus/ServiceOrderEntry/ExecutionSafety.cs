@@ -22,16 +22,18 @@ internal static class HandoffRules
     public static IReadOnlyList<DocumentInfo> PreflightAttachments(MomentusGateway gateway, RunRow row)
     {
         var contracts = row.Contracts ?? throw new RecoveryReviewException("REVIEW: contract attachment identity is missing.");
-        if (contracts.ReviewMessage.Length > 0 || contracts.ScheduleSource is null) throw new RecoveryReviewException("REVIEW: contract attachment scope is unresolved.");
+        if (!contracts.HasResolvedSchedule) throw new RecoveryReviewException("REVIEW: contract attachment scope is unresolved.");
         var documents = contracts.OrderDocuments.Concat(contracts.Sources).GroupBy(x => x.ContentHash).Select(x => x.First().Document).ToList();
-        if (documents.Count == 0) throw new RecoveryReviewException("REVIEW: no applicable contract attachment exists.");
+        if (documents.Count == 0 && !contracts.MissingPaymentSchedule) throw new RecoveryReviewException("REVIEW: no applicable contract attachment exists.");
         foreach (var document in documents) _ = gateway.VerifiedDocumentData(document);
-        if (gateway.Journal?.Evidence.SendEmail ?? true) _ = ReadyEmailBuilder.Recipients(row);
+        if (gateway.Journal?.Evidence.SendEmail ?? true) ReadyEmailBuilder.VerifyEmployeeRecipient(gateway, row);
         return documents;
     }
 
     public static VerifiedHandoff Verify(MomentusGateway gateway, RunRow row, ProcessingJournal journal)
     {
+        using var snapshot = gateway.BeginHandoffReadSnapshot();
+        using var verificationProgress = gateway.Progress?.Begin("Verifying final billing, order details, payment note and contract attachments");
         _ = PlanGuard.BeforeWrite(gateway, row, "Verify handoff", new object());
         BillingGuard.VerifyFinal(gateway, row);
         var order = gateway.GetOrder(row.OrderNumber);
@@ -40,8 +42,8 @@ internal static class HandoffRules
             !TextRules.Same(order.OrderAccountRep, row.ProposedOrderAccountRep) || order.Category != row.ProposedCategory || !TextRules.Same(order.BoothNumber, row.ProposedBoothNumber))
             throw new RecoveryReviewException("REVIEW: handoff order identity/fields disagree with verified processing.");
         var exhibitor = gateway.GetExhibitor(row.ExhibitorId);
-        var note = ManagedNoteRules.Resolve(gateway.GetOrderSonNotes(row.OrderNumber), journal.Evidence.Stages);
-        if (note.Note is null || note.Action != "OWNED" || ManagedNoteRules.ContentHash(ManagedNoteRules.Text(note.Note)) != ManagedNoteRules.ContentHash(row.PaymentScheduleText))
+        var note = ManagedNoteRules.Resolve(gateway.GetOrderSonNotes(row.OrderNumber), journal.Evidence.Stages, row.PaymentScheduleText);
+        if (note.Note is null || note.Action is not ("OWNED" or "CURRENT MATCH") || ManagedNoteRules.ContentHash(ManagedNoteRules.Text(note.Note)) != ManagedNoteRules.ContentHash(row.PaymentScheduleText))
             throw new RecoveryReviewException("REVIEW: handoff payment schedule is not verified in the assigned managed note.");
         if (!ExhibitorCategoryRules.Parse(exhibitor.ExhibitorCategory).SequenceEqual(ExhibitorCategoryRules.Parse(row.FinalExhibitorCategories)))
             throw new RecoveryReviewException("REVIEW: final exhibitor categories differ from verified processing.");
@@ -68,16 +70,17 @@ internal static class HandoffRules
                 (includeActivation || x.Operation != "Activate order") && x.Status != StageStatus.Verified) || !Has("Update service order") ||
             evidence.Plan.ManagedNoteSequence is null || evidence.Plan.ManagedNoteContentHash != ManagedNoteRules.ContentHash(evidence.Plan.PaymentScheduleText) ||
             includeEmail && evidence.SendEmail && !Has("Send ready email") ||
-            includeActivation && evidence.ActivateOrder && !evidence.Plan.ApprovalNeeded && !Has("Activate order"))
+            includeActivation && evidence.ActivateOrder && !Has("Activate order"))
             throw new RecoveryReviewException("REVIEW: required order stages are not all Verified; activation is prohibited.");
     }
 
-    public static void VerifyRetained(MomentusGateway gateway, OrderEvidence evidence, ServiceOrdersModel? current = null)
+    public static void VerifyRetained(MomentusGateway gateway, OrderEvidence evidence, ServiceOrdersModel? current = null, bool includeEmail = true)
     {
-        RequireOrderStages(evidence, includeActivation: true);
+        RequireOrderStages(evidence, includeActivation: true, includeEmail: includeEmail);
         var handoff = evidence.Handoff ?? throw new RecoveryReviewException("REVIEW: completed order lacks verified handoff evidence.");
         var identity = evidence.Identity;
         var row = evidence.Plan;
+        if (row.EffectiveBilling?.RequiresContactRelationship == true) BillingGuard.VerifyContactRelationship(gateway, row);
         current ??= gateway.GetOrder(identity.Order);
         var committed = handoff.Order;
         var activated = evidence.Stages.Any(x => x.Operation == "Activate order" && x.Status == StageStatus.Verified);
@@ -93,21 +96,26 @@ internal static class HandoffRules
             row.BillingConfiguration is null || !row.BillingConfiguration.SameAs(gateway.BillingConfiguration) ||
             MomentusGateway.BillingFrom(source, gateway.BillingConfiguration) != row.RequestedBilling)
             throw new RecoveryReviewException("REVIEW: completed order's billing instructions/configuration changed.");
-        var note = ManagedNoteRules.Resolve(gateway.GetOrderSonNotes(identity.Order), evidence.Stages);
-        if (note.Action != "OWNED" || note.Note?.SequenceNumber != handoff.NoteSequence || ManagedNoteRules.ContentHash(ManagedNoteRules.Text(note.Note!)) != handoff.NoteHash)
+        var note = ManagedNoteRules.Resolve(gateway.GetOrderSonNotes(identity.Order), evidence.Stages, row.PaymentScheduleText);
+        if (note.Action is not ("OWNED" or "CURRENT MATCH") || note.Note?.SequenceNumber != handoff.NoteSequence || ManagedNoteRules.ContentHash(ManagedNoteRules.Text(note.Note!)) != handoff.NoteHash)
             throw new RecoveryReviewException("REVIEW: completed order's managed payment note differs from its verified handoff.");
         PlanGuard.ValidateContracts(gateway, row, evidence);
         var inputs = row.DecisionInputs ?? throw new RecoveryReviewException("REVIEW: completed order lacks decision evidence.");
         PlanGuard.ValidateRetainedIdentities(current, gateway.GetExhibitor(identity.Exhibitor), inputs);
-        if (!gateway.GetOrderItems(identity.Order).OrderBy(x => x.LineNumber).SequenceEqual(inputs.Items.OrderBy(x => x.LineNumber)) ||
-            gateway.GetBoothEvidence(identity.Exhibitor, identity.Event) != inputs.Booth)
-            throw new RecoveryReviewException("REVIEW: completed order's item/booth evidence changed.");
+        PlanGuard.ValidateBooth(gateway, row, current);
+        var category = CategoryRules.Resolve(gateway.GetOrderItems(identity.Order), inputs.Categories);
+        if (category.Sequence != committed.Category || category.Description != handoff.CategoryName)
+            throw new RecoveryReviewException("REVIEW: completed order's current item category differs from its verified handoff.");
     }
 }
 
 internal sealed record ActivationDecision(bool Allowed, bool AlreadyVerified, string Message, ExhibitorsModel Exhibitor);
 internal static class ActivationRules
 {
+    static bool Verified(OrderEvidence evidence, string operation) => evidence.Stages.Any(x => x.Operation == operation && x.Status == StageStatus.Verified);
+    public static bool CompatibleExhibitorStatus(int status, OrderEvidence evidence) => Verified(evidence, "Activate exhibitor") ? status == 2 :
+        status == 35 || status == 2 && evidence.ActivateExhibitor && Verified(evidence, "Activate order");
+
     public static IReadOnlyList<OrderEvidence> Group(IEnumerable<OrderEvidence> records, OrderIdentity scope) => records.Where(x =>
         x.Identity.Endpoint == scope.Endpoint && x.Identity.Organization == scope.Organization && x.Identity.Exhibitor == scope.Exhibitor && x.Identity.Event == scope.Event).ToList();
     public static ActivationDecision Check(MomentusGateway gateway, OrderEvidence owner, IReadOnlyList<OrderEvidence> records)
@@ -126,9 +134,9 @@ internal static class ActivationRules
         }
         var orders = ReadOrders();
         var exhibitor = ReadExhibitor();
-        if (ExhibitorCategoryRules.HasCode(exhibitor.ExhibitorCategory, ExhibitorCategoryRules.Hold) || ExhibitorCategoryRules.HasCode(exhibitor.ExhibitorCategory, ExhibitorCategoryRules.ApprovalNeeded))
-            return new(false, false, "Current Hold or Approval Needed blocks exhibitor activation.", exhibitor);
-        var group = Group(records, owner.Identity).Where(x => x.Identity != owner.Identity).Append(owner).ToList();
+        if (ExhibitorCategoryRules.HasCode(exhibitor.ExhibitorCategory, ExhibitorCategoryRules.Hold))
+            return new(false, false, "Current Hold blocks exhibitor activation.", exhibitor);
+        var group = Group(records, owner.Identity).Where(x => x.Identity != owner.Identity && !SupersededRecoveryRules.Excludes(x, orders)).Append(owner).ToList();
         if (orders.Count == 0 || !orders.Any(x => x.OrderNumber == owner.Identity.Order)) throw new RecoveryReviewException("REVIEW: complete activation order set does not contain the current verified order.");
         foreach (var record in group)
         {
@@ -141,23 +149,25 @@ internal static class ActivationRules
         {
             var shared = record.Identity == owner.Identity;
             if (!record.OrderComplete || record.Handoff is null || !shared && (!record.Complete || record.Plan.Outcome is "REVIEW" or "FAILED" or "UNKNOWN") ||
-                record.Stages.Any(x => (!shared || x.Operation != "Activate exhibitor") && x.Status != StageStatus.Verified))
+                record.Stages.Any(x => (!shared || x.Operation is not ("Activate exhibitor" or "Send ready email")) && x.Status != StageStatus.Verified))
                 return new(false, false, "A journaled order has unresolved/Review/Failed/Unknown processing; exhibitor activation deferred.", exhibitor);
-            HandoffRules.RequireOrderStages(record, includeActivation: true);
+            HandoffRules.RequireOrderStages(record, includeActivation: true, includeEmail: !shared);
             var current = orders.SingleOrDefault(x => x.OrderNumber == record.Identity.Order);
             if (current is null) throw new RecoveryReviewException("REVIEW: journaled order is absent from the complete exhibitor/event order set.");
-            HandoffRules.VerifyRetained(gateway, record, current);
+            HandoffRules.VerifyRetained(gateway, record, current, includeEmail: !shared);
         }
         // Group verification can take several reads. Stop if the complete order set changed,
         // then use the final exhibitor read as the mutation payload, preserving new categories.
         if (JsonConvert.SerializeObject(orders.OrderBy(x => x.OrderNumber)) != JsonConvert.SerializeObject(ReadOrders().OrderBy(x => x.OrderNumber)))
             throw new RecoveryReviewException("REVIEW: complete activation order set changed during group verification.");
         exhibitor = ReadExhibitor();
-        if (ExhibitorCategoryRules.HasCode(exhibitor.ExhibitorCategory, ExhibitorCategoryRules.Hold) || ExhibitorCategoryRules.HasCode(exhibitor.ExhibitorCategory, ExhibitorCategoryRules.ApprovalNeeded))
-            return new(false, false, "Current Hold or Approval Needed blocks exhibitor activation.", exhibitor);
+        if (ExhibitorCategoryRules.HasCode(exhibitor.ExhibitorCategory, ExhibitorCategoryRules.Hold))
+            return new(false, false, "Current Hold blocks exhibitor activation.", exhibitor);
         foreach (var record in group) PlanGuard.ValidateRetainedIdentities(orders.Single(x => x.OrderNumber == record.Identity.Order), exhibitor, record.Plan.DecisionInputs!);
         var verified = group.Any(x => x.Stages.Any(s => s.Operation == "Activate exhibitor" && s.Status == StageStatus.Verified));
-        if (exhibitor.ExhibitorStatus == 2 && verified) return new(false, true, "Exhibitor activation already Verified by the group journal.", exhibitor);
+        if (exhibitor.ExhibitorStatus == 2 && (verified || owner.ActivateExhibitor && Verified(owner, "Activate order")))
+            return new(false, true, verified ? "Exhibitor activation already Verified by the group journal." :
+                "Exhibitor is already Active (2) after verified order activation; current identity and complete order group verified.", exhibitor);
         if (exhibitor.ExhibitorStatus != 35 || verified) throw new RecoveryReviewException("REVIEW: current exhibitor status conflicts with group activation evidence.");
         return new(true, false, "Every PC and journaled order is resolved; exhibitor activation authorized.", exhibitor);
     }

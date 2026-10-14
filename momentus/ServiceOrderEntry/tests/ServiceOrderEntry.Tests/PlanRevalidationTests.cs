@@ -29,7 +29,7 @@ public sealed class PlanRevalidationTests
             default: throw new Exception(input);
         }
     }
-    public static IEnumerable<object[]> MaterialInputs() => new[] { "hold", "approval", "selector", "billing", "items", "units", "booth", "activity",
+    public static IEnumerable<object[]> MaterialInputs() => new[] { "hold", "selector", "billing", "items", "booth", "activity",
         "contract", "schedule", "rep", "order category", "order status", "exhibitor status", "managed categories", "currency", "invalid category" }.Select(x => new object[] { x });
     [Theory] [MemberData(nameof(MaterialInputs))] public void ChangedDecisionInputBeforeApplyBlocksEveryMutation(string input)
     {
@@ -37,7 +37,7 @@ public sealed class PlanRevalidationTests
         Assert.True(s.Row.ServiceOrderUpdateStatus == "RECOVERY REVIEW", s.Row.UpdateMessage);
         Assert.Empty(s.Transport.Mutations); Assert.Equal("REVIEW", s.Row.ValidationStatus);
     }
-    [Theory] [InlineData("hold")] [InlineData("approval")] [InlineData("selector")] [InlineData("items")]
+    [Theory] [InlineData("hold")] [InlineData("selector")] [InlineData("items")]
     [InlineData("contract")] [InlineData("schedule")] [InlineData("booth")] [InlineData("billing")]
     public void MaterialChangesBetweenStagesStopAtNextDispatchBoundary(string input)
     {

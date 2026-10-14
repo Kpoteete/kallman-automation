@@ -4,6 +4,35 @@ namespace ServiceOrderEntry.Tests;
 
 public sealed class JournalRecoveryTests
 {
+    [Theory]
+    [InlineData((int)StageStatus.Succeeded)]
+    [InlineData((int)StageStatus.Verified)]
+    public void ReturnedUnlinkedContactSurvivesACrashBeforeAffiliationWithoutAnotherCreation(int status)
+    {
+        using var scenario = new RetryBoundaryTests.Scenario("Create contact");
+        scenario.Transport.FaultEnabled = false;
+        scenario.Transport.ResponseOverride = result =>
+        {
+            if (result is Ungerboeck.Api.Models.Subjects.AllAccountsModel { Class: "P", AccountCode: "NEWCONTACT" } contact)
+                contact.PrimaryAccount = "";
+            return result;
+        };
+        var durable = scenario.Store;
+        scenario.Store = new FaultStore(durable,
+            evidence => evidence.Stages.Any(x => x.Operation == "Create contact" && x.Status == (StageStatus)status), afterSave: true);
+        Assert.Throws<JournalStorageException>(() => scenario.Apply());
+        Assert.Equal(new[] { "Create contact" }, scenario.Transport.Mutations);
+        Assert.Equal("CONTACT", scenario.Transport.Order.BillToContact);
+        scenario.Store = new FileJournalStore(scenario.Options.StateFolder);
+        var resumed = scenario.Apply(restart: true);
+        Assert.True(resumed.ServiceOrderUpdateStatus == "COMPLETED", resumed.UpdateMessage);
+        Assert.Equal("NEWCONTACT", scenario.Transport.Order.BillToContact);
+        Assert.Equal("", scenario.Transport.Accounts["NEWCONTACT"].PrimaryAccount);
+        Assert.Single(scenario.Transport.Mutations, x => x == "Create contact");
+        Assert.Single(scenario.Transport.Mutations, x => x == "Add CTA relationship");
+        Assert.All(scenario.Store.Load().Single().Stages, x => Assert.Equal(StageStatus.Verified, x.Status));
+    }
+
     public static IEnumerable<object[]> Stages()
     {
         foreach (var stage in new[] { "Create organization account", "Add BTO relationship", "Create contact",
@@ -157,8 +186,9 @@ public sealed class JournalRecoveryTests
         Assert.Equal(2, scenario.Transport.Exhibitor.ExhibitorStatus);
         Assert.Empty(scenario.Gateway.FindCandidates());
         var work = Runner.DiscoverWork(scenario.Gateway, durable.Load(), scenario.Options);
-        Assert.Single(work);
-        Assert.Equal(3, work[0].Order.OrderNumber);
+        Assert.Empty(work.Failures);
+        Assert.Single(work.Candidates);
+        Assert.Equal(3, work.Candidates[0].Order.OrderNumber);
         scenario.Store = durable;
         Assert.Equal("COMPLETED", scenario.Apply(restart: true).ServiceOrderUpdateStatus);
     }

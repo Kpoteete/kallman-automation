@@ -77,9 +77,9 @@ public sealed class RulesTests
     }
 
     [Fact]
-    public void BlankSelectorUsesExistingAboveValues()
+    public void BlankSelectorStillRequiresSubmittedContact()
     {
-        Assert.True(BillingRules.IsComplete(RunRow.EmptyBilling));
+        Assert.False(BillingRules.IsComplete(RunRow.EmptyBilling));
     }
 
     [Fact]
@@ -255,7 +255,7 @@ public sealed class RulesTests
     }
 
     [Fact]
-    public void ApprovalNeededBlocksActivationButIsNeverAddedByRules()
+    public void ApprovalNeededIsPreservedForEmailAndIsNeverAddedByRules()
     {
         var result = ExhibitorCategoryRules.Resolve("102,9", "Kiosk", [], "N");
         Assert.True(result.ApprovalNeeded);
@@ -359,7 +359,7 @@ public sealed class RulesTests
         ProposedBoothNumber = "101", FinalBillToAccount = "ACCOUNT", FinalBillToContact = "CONTACT",
         BillingVersion = 1, ValidCategoryIds = [28],
         EffectiveBilling = new(RetryBoundaryTests.TestAccount(), RetryBoundaryTests.TestContact(), "Existing", "Existing", true),
-        BillToAddressAction = "KEEP EXISTING", RequestedBilling = RunRow.EmptyBilling with { Email = "billing@example.com" }
+        BillToAddressAction = "KEEP EXISTING", RequestedBilling = RetryBoundaryTests.TestRequest()
         , PaymentScheduleText = "Payment Schedule", PaymentScheduleNoteAction = "ADD"
     };
 }

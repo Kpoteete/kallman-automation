@@ -80,19 +80,27 @@ internal static class BillingRules
     public static AccountInfo RequestedAccount(BillingRequest r) => RunRow.EmptyAccount with
     { AccountClass = "O", Company = r.CompanyName, Address = r.Address, City = r.City, State = r.State, PostalCode = r.PostalCode, Country = TextRules.MomentusCountry(r.Country) };
     public static AccountInfo RequestedContact(BillingRequest r) => RunRow.EmptyAccount with
-    { AccountClass = "P", FirstName = r.FirstName, LastName = r.LastName, Email = TextRules.NormalizeEmail(r.Email) };
+    { AccountClass = "P", FirstName = r.FirstName, LastName = r.LastName, Email = TextRules.NormalizeEmail(r.Email),
+        Address = r.Address, City = r.City, State = r.State, PostalCode = r.PostalCode, Country = TextRules.MomentusCountry(r.Country) };
 
     public static List<string> RequestedErrors(BillingRequest request, BillingConfiguration config)
     {
-        var errors = new List<string>();
         var selector = config.Selector(request);
-        if (selector == "ABOVE") return errors;
         if (selector == "UNKNOWN") return ["Unknown Bill-To selector; REVIEW."];
+        var errors = RequestedContactErrors(request);
+        if (selector == "ABOVE") return errors;
         if (TextRules.NormalizeCompany(request.CompanyName).Length == 0) errors.Add("Requested company has no usable identity.");
-        if (new[] { request.CompanyName, request.FirstName, request.LastName }.Any(x => x.Any(char.IsControl))) errors.Add("Requested company/contact name contains invalid control characters.");
+        if (request.CompanyName.Any(char.IsControl)) errors.Add("Requested company name contains invalid control characters.");
+        errors.AddRange(AddressErrors(RequestedAccount(request)));
+        return errors;
+    }
+
+    public static List<string> RequestedContactErrors(BillingRequest request)
+    {
+        var errors = new List<string>();
+        if (new[] { request.FirstName, request.LastName }.Any(x => x.Any(char.IsControl))) errors.Add("Requested contact name contains invalid control characters.");
         if (new[] { request.FirstName, request.LastName }.Any(string.IsNullOrWhiteSpace)) errors.Add("Requested billing contact name is incomplete.");
         if (!ValidEmail(request.Email)) errors.Add("Requested billing email is invalid.");
-        errors.AddRange(AddressErrors(RequestedAccount(request)));
         return errors;
     }
 
@@ -108,8 +116,17 @@ internal static class BillingRules
         if (new[] { state.Contact.FirstName, state.Contact.LastName }.Any(string.IsNullOrWhiteSpace)) errors.Add("Effective billing contact name is incomplete.");
         if (!ValidEmail(state.Contact.Email)) errors.Add("Effective billing email is invalid.");
         if (state.Contact.AccountClass != "P") errors.Add("Effective Bill-To contact is not a contact account.");
-        if (!state.ContactCreationPending && !TextRules.Same(state.Contact.PrimaryAccount, state.Account.AccountCode)) errors.Add("Effective contact does not belong to the intended Bill-To account.");
-        if (!state.AboveAddress && TextRules.NormalizeEmail(state.Contact.Email) != TextRules.NormalizeEmail(row.RequestedBilling.Email)) errors.Add("Effective billing email differs from the separate Bill-To request.");
+        if (!state.ContactCreationPending && !TextRules.Same(state.Contact.PrimaryAccount, state.Account.AccountCode) &&
+            (!state.RequiresContactRelationship || (!string.IsNullOrWhiteSpace(state.Contact.PrimaryAccount) && !ValidCode(state.Contact.PrimaryAccount))))
+            errors.Add("Effective contact does not belong to the intended Bill-To account.");
+        if (state.RequiresContactRelationship && (state.ContactCreationPending ||
+            !TextRules.Same(state.Contact.FirstName, row.RequestedBilling.FirstName) || !TextRules.Same(state.Contact.LastName, row.RequestedBilling.LastName)))
+            errors.Add("Cross-account contact reuse requires the verified requested name and existing contact identity.");
+        if (requireIds && state.ContactRelationshipPending) errors.Add("The billing-company contact relationship is not verified.");
+        if (requireIds && state.ContactAddressRequired && !TextRules.AddressMatches(state.Contact, BillingState.ContactRequest(row)))
+            errors.Add("Effective billing contact address differs from the selected contract billing address.");
+        errors.AddRange(RequestedContactErrors(row.RequestedBilling));
+        if (TextRules.NormalizeEmail(state.Contact.Email) != TextRules.NormalizeEmail(row.RequestedBilling.Email)) errors.Add("Effective billing email differs from the Bill-To request.");
         if (requireIds || !state.AccountCreationPending)
             if (!ValidCode(state.Account.AccountCode) || !TextRules.Same(row.FinalBillToAccount, state.Account.AccountCode)) errors.Add("Effective account identity is invalid.");
         if (requireIds || !state.ContactCreationPending)
@@ -242,7 +259,7 @@ internal static class ValidationRules
         if (!string.IsNullOrWhiteSpace(row.PaymentScheduleDecisionMessage)) messages.Add(row.PaymentScheduleDecisionMessage);
         if (row.BillToAddressAction.Contains("UPDATE", StringComparison.OrdinalIgnoreCase)) messages.Add("Shared account address updates are not authorized.");
         messages.AddRange(BillingRules.EffectiveErrors(row));
-        return messages.Count == 0 ? (row.EffectiveBilling!.AccountCreationPending || row.EffectiveBilling.ContactCreationPending ? "PREPARED" : "READY", "") : ("REVIEW", string.Join(" ", messages.Distinct()));
+        return messages.Count == 0 ? (row.EffectiveBilling!.AccountCreationPending || row.EffectiveBilling.ContactCreationPending || row.EffectiveBilling.ContactRelationshipPending ? "PREPARED" : "READY", "") : ("REVIEW", string.Join(" ", messages.Distinct()));
     }
 }
 
