@@ -1,0 +1,12 @@
+# Add one Momentus Event ID per line to enable Service Order Entry for that event.
+# An empty file means no events are enabled.
+6316
+6267
+6298
+6239
+6193
+6234
+6248
+6220
+6165
+6305

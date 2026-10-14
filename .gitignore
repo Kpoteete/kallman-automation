@@ -4,6 +4,7 @@
 secrets.json
 appsettings.Production.json
 appsettings.Development.json
+/momentus/ServiceOrderEntry/billing-config.json
 
 runs/
 .momentus-profile/
@@ -45,6 +46,8 @@ diagnose_*.py
 appsettings.local.json
 projects/Schedule of events/8961AB00
 *.xlsx
+!momentus/ServiceOrderEntry/SalesRepLookup.xlsx
+!momentus/ServiceOrderEntry/OrderCategoryLookup.xlsx
 *.csv
 *.log
 ~$*
